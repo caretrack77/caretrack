@@ -1,0 +1,21 @@
+{
+  "name": "caretrack",
+  "version": "1.0.0",
+  "description": "CareTrack: An AI-Driven Patient Care Platform for Medication Adherence Tracking and Data-Analytics-Based Automated Reporting",
+  "license": "MIT",
+  "private": true,
+  "scripts": {
+    "dev": "concurrently -n api,web -c cyan,magenta \"pnpm --filter @workspace/api-server run dev\" \"pnpm --filter @workspace/caretrack run dev\"",
+    "build": "pnpm run typecheck && pnpm -r --if-present run build",
+    "start": "pnpm --filter @workspace/api-server run start",
+    "db:push": "pnpm --filter @workspace/db run push",
+    "db:seed": "pnpm --filter @workspace/api-server run seed",
+    "typecheck:libs": "tsc --build",
+    "typecheck": "pnpm run typecheck:libs && pnpm -r --filter \"./artifacts/**\" --if-present run typecheck"
+  },
+  "devDependencies": {
+    "concurrently": "^9.2.1",
+    "prettier": "^3.9.10",
+    "typescript": "~5.9.3"
+  }
+}

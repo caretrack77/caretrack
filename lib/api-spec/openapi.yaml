@@ -1,0 +1,1675 @@
+openapi: 3.1.0
+info:
+  # Do not change the title, if the title changes, the import paths will be broken
+  title: Api
+  version: 0.1.0
+  description: CareTrack patient care platform API
+servers:
+  - url: /api
+    description: Base API path
+tags:
+  - name: health
+    description: Health operations
+  - name: auth
+    description: Demo account authentication
+  - name: users
+    description: User administration
+  - name: patients
+    description: Patient profiles and care assignments
+  - name: medications
+    description: Medication schedules
+  - name: doses
+    description: Scheduled doses and adherence logging
+  - name: analytics
+    description: Adherence trends and risk indicators
+  - name: insights
+    description: Anonymized AI adherence insights
+  - name: notifications
+    description: In-app alerts
+  - name: reports
+    description: Generated and scheduled reports
+  - name: admin
+    description: Administrative audit history
+  - name: messages
+    description: Patient and care-team messaging
+paths:
+  /healthz:
+    get:
+      operationId: healthCheck
+      tags: [health]
+      summary: Health check
+      description: Returns server health status
+      responses:
+        "200":
+          description: Healthy
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/HealthStatus"
+  /auth/login:
+    post:
+      operationId: login
+      tags: [auth]
+      summary: Sign in with a demo account
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/LoginInput"
+      responses:
+        "200":
+          description: Password accepted. Either a one-time code is required, or the user is signed in.
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/LoginChallenge"
+        "401":
+          description: Invalid credentials
+  /auth/change-password:
+    post:
+      operationId: changePassword
+      tags: [auth]
+      summary: Change the signed-in user's password
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ChangePasswordInput" }
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AuthUser" }
+        "400":
+          description: Current password incorrect or new password too weak
+  /auth/otp/send:
+    post:
+      operationId: sendLoginOtp
+      tags: [auth]
+      summary: Send the one-time login code by email or SMS
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OtpSendInput"
+      responses:
+        "200":
+          description: Code issued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/OtpSendResult"
+  /auth/otp/verify:
+    post:
+      operationId: verifyLoginOtp
+      tags: [auth]
+      summary: Verify the one-time login code and start a session
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OtpVerifyInput"
+      responses:
+        "200":
+          description: Signed-in user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthUser"
+        "401":
+          description: Invalid or expired code
+  /auth/me:
+    get:
+      operationId: getCurrentUser
+      tags: [auth]
+      summary: Get the signed-in user
+      responses:
+        "200":
+          description: Current user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/AuthUser"
+        "401":
+          description: Not signed in
+  /auth/logout:
+    post:
+      operationId: logout
+      tags: [auth]
+      summary: End the current session
+      responses:
+        "204":
+          description: Signed out
+  /users:
+    get:
+      operationId: listUsers
+      tags: [users]
+      summary: List users for administration
+      responses:
+        "200":
+          description: Users
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/User"
+    post:
+      operationId: createUser
+      tags: [users]
+      summary: Create a user
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserInput"
+      responses:
+        "201":
+          description: Created user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+  /users/{id}:
+    patch:
+      operationId: updateUser
+      tags: [users]
+      summary: Update or deactivate a user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/UserUpdate"
+      responses:
+        "200":
+          description: Updated user
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "404":
+          description: User not found
+  /patients:
+    get:
+      operationId: listPatients
+      tags: [patients]
+      summary: List patients visible to the current user
+      responses:
+        "200":
+          description: Patients
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Patient"
+    post:
+      operationId: createPatient
+      tags: [patients]
+      summary: Add a patient profile
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatientInput"
+      responses:
+        "201":
+          description: Created patient
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Patient"
+  /patients/{id}:
+    get:
+      operationId: getPatient
+      tags: [patients]
+      summary: Get an assigned patient profile
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Patient
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/PatientDetail"
+        "404":
+          description: Patient not found
+    patch:
+      operationId: updatePatient
+      tags: [patients]
+      summary: Update a patient profile
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PatientUpdate"
+      responses:
+        "200":
+          description: Updated patient
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Patient"
+        "404":
+          description: Patient not found
+  /medications:
+    get:
+      operationId: listMedications
+      tags: [medications]
+      summary: List visible medications
+      parameters:
+        - name: patientId
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Medications
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Medication"
+    post:
+      operationId: createMedication
+      tags: [medications]
+      summary: Prescribe a medication schedule
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MedicationInput"
+      responses:
+        "201":
+          description: Created medication
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Medication"
+  /medications/{id}:
+    patch:
+      operationId: updateMedication
+      tags: [medications]
+      summary: Update a medication schedule
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/MedicationUpdate"
+      responses:
+        "200":
+          description: Updated medication
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Medication"
+        "404":
+          description: Medication not found
+    delete:
+      operationId: deleteMedication
+      tags: [medications]
+      summary: Deactivate a medication
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Medication deactivated
+        "404":
+          description: Medication not found
+  /doses:
+    get:
+      operationId: listDoses
+      tags: [doses]
+      summary: List scheduled doses for a date
+      parameters:
+        - name: date
+          in: query
+          required: false
+          schema:
+            type: string
+            format: date
+        - name: patientId
+          in: query
+          required: false
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Dose events
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Dose"
+  /doses/{id}/status:
+    patch:
+      operationId: updateDoseStatus
+      tags: [doses]
+      summary: Log a dose as taken, missed, or skipped
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DoseStatusInput"
+      responses:
+        "200":
+          description: Updated dose
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dose"
+        "404":
+          description: Dose not found
+  /doses/demo-due:
+    post:
+      operationId: createDemoDose
+      tags: [doses]
+      summary: Create a dose due now for a live demonstration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/DemoDoseInput"
+      responses:
+        "201":
+          description: Dose due now
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Dose"
+  /doses/simulate-overdue:
+    post:
+      operationId: simulateOverdueDoses
+      tags: [doses]
+      summary: Demo tool that moves due doses past the 2-hour grace period and runs the missed-dose job
+      responses:
+        "200":
+          description: Result of the simulated missed-dose check
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SimulationResult"
+  /patients/{id}/medication-progress:
+    get:
+      operationId: getMedicationProgress
+      tags: [medications]
+      summary: Course progress and adherence indicator for each of a patient's medications
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Medication progress
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/MedicationProgress" }
+  /messages/threads:
+    get:
+      operationId: listMessageThreads
+      tags: [messages]
+      summary: Conversations the signed-in user can see, one per patient
+      responses:
+        "200":
+          description: Threads
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/MessageThread" }
+  /patients/{id}/messages:
+    get:
+      operationId: listPatientMessages
+      tags: [messages]
+      summary: Messages between a patient and their care team
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Messages, oldest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Message" }
+    post:
+      operationId: sendPatientMessage
+      tags: [messages]
+      summary: Send a message in a patient's care-team conversation
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MessageInput" }
+      responses:
+        "201":
+          description: Sent message
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Message" }
+  /patients/{id}/messages/read:
+    post:
+      operationId: markPatientMessagesRead
+      tags: [messages]
+      summary: Mark a conversation as read for the signed-in user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "204":
+          description: Marked as read
+  /providers:
+    get:
+      operationId: listProviders
+      tags: [users]
+      summary: Active doctors and nurses, for assignment and coverage pickers
+      responses:
+        "200":
+          description: Providers
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ProviderSummary" }
+  /coverage:
+    get:
+      operationId: listCoverage
+      tags: [users]
+      summary: Coverage arrangements visible to the signed-in user
+      responses:
+        "200":
+          description: Coverage arrangements, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Coverage" }
+    post:
+      operationId: createCoverage
+      tags: [users]
+      summary: Hand an absent provider's patients to a covering provider
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/CoverageInput" }
+      responses:
+        "201":
+          description: Created coverage
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Coverage" }
+  /coverage/{id}/end:
+    post:
+      operationId: endCoverage
+      tags: [users]
+      summary: End a coverage arrangement early
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Ended coverage
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Coverage" }
+  /admin/delivery-status:
+    get:
+      operationId: getDeliveryStatus
+      tags: [admin]
+      summary: Whether Gmail and SMS delivery are configured
+      responses:
+        "200":
+          description: Delivery configuration
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeliveryStatus" }
+  /admin/delivery-test:
+    post:
+      operationId: sendDeliveryTest
+      tags: [admin]
+      summary: Send a test email or SMS to check the configuration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/DeliveryTestInput" }
+      responses:
+        "200":
+          description: Result of the test
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/DeliveryTestResult" }
+  /patients/{id}/account:
+    post:
+      operationId: createPatientAccount
+      tags: [patients]
+      summary: Create a login for a patient and link it to their profile
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatientAccountInput" }
+      responses:
+        "201":
+          description: Created login
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PatientAccount" }
+  /ai/model:
+    get:
+      operationId: getRiskModel
+      tags: [insights]
+      summary: The current Random Forest risk model, its parameters and evaluation
+      responses:
+        "200":
+          description: Model overview
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RiskModelOverview" }
+  /ai/model/train:
+    post:
+      operationId: trainRiskModel
+      tags: [insights]
+      summary: Retrain the risk model on the latest data and refresh all predictions
+      responses:
+        "200":
+          description: Training result
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/RiskTrainResult" }
+  /ai/predictions:
+    get:
+      operationId: listRiskPredictions
+      tags: [insights]
+      summary: Latest predicted risk for every visible patient
+      responses:
+        "200":
+          description: Predictions, highest risk first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/RiskPrediction" }
+  /patients/{id}/risk-prediction:
+    get:
+      operationId: getPatientRisk
+      tags: [insights]
+      summary: Predicted risk, explanation and recommendations for one patient
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Patient risk
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PatientRiskDetail" }
+  /patients/{id}/lab-results:
+    get:
+      operationId: listLabResults
+      tags: [patients]
+      summary: Laboratory result files for a patient
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Lab results, newest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/LabResult" }
+    post:
+      operationId: uploadLabResult
+      tags: [patients]
+      summary: Upload a laboratory result (PDF or image, stored encrypted)
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LabResultInput" }
+      responses:
+        "201":
+          description: Uploaded
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LabResult" }
+  /lab-results/{id}/file:
+    get:
+      operationId: downloadLabResult
+      tags: [patients]
+      summary: Download the decrypted lab result file
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: The file
+          content:
+            application/octet-stream:
+              schema: { type: string, format: binary }
+  /lab-results/{id}/review:
+    post:
+      operationId: reviewLabResult
+      tags: [patients]
+      summary: Doctor's review comment on a lab result
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/LabReviewInput" }
+      responses:
+        "200":
+          description: Reviewed
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/LabResult" }
+  /appointments:
+    get:
+      operationId: listAppointments
+      tags: [patients]
+      summary: Follow-up check-ups visible to the signed-in user
+      responses:
+        "200":
+          description: Appointments, soonest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Appointment" }
+    post:
+      operationId: createAppointment
+      tags: [patients]
+      summary: Schedule a follow-up check-up
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AppointmentInput" }
+      responses:
+        "201":
+          description: Created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Appointment" }
+  /appointments/{id}:
+    patch:
+      operationId: updateAppointment
+      tags: [patients]
+      summary: Complete, cancel or reschedule a check-up
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AppointmentUpdate" }
+      responses:
+        "200":
+          description: Updated
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Appointment" }
+  /assistant:
+    post:
+      operationId: askAssistant
+      tags: [insights]
+      summary: Ask the CareTrack assistant about your medications (off-topic questions are declined)
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/AssistantInput" }
+      responses:
+        "200":
+          description: Reply
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AssistantReply" }
+  /analytics:
+    get:
+      operationId: getAnalytics
+      tags: [analytics]
+      summary: Get adherence metrics and patient risk indicators
+      parameters:
+        - name: from
+          in: query
+          required: false
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          required: false
+          schema: { type: string, format: date }
+        - name: patientId
+          in: query
+          required: false
+          schema: { type: integer }
+        - name: medicationId
+          in: query
+          required: false
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Filtered adherence metrics
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Analytics"
+  /patients/{id}/insights:
+    get:
+      operationId: listPatientInsights
+      tags: [insights]
+      summary: List saved insights for an assigned patient
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Saved insights
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AiInsight" }
+    post:
+      operationId: generatePatientInsight
+      tags: [insights]
+      summary: Generate a privacy-preserving adherence insight
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "201":
+          description: Generated insight
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/AiInsight" }
+  /notifications:
+    get:
+      operationId: listNotifications
+      tags: [notifications]
+      summary: List the signed-in user's notifications
+      responses:
+        "200":
+          description: Notifications
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Notification" }
+  /notifications/{id}/read:
+    post:
+      operationId: markNotificationRead
+      tags: [notifications]
+      summary: Mark a notification as read
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Updated notification
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Notification" }
+        "404":
+          description: Notification not found
+  /reports:
+    get:
+      operationId: listReports
+      tags: [reports]
+      summary: List report history visible to the signed-in user
+      responses:
+        "200":
+          description: Reports
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/Report" }
+    post:
+      operationId: generateReport
+      tags: [reports]
+      summary: Generate a patient or caseload report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReportInput" }
+      responses:
+        "201":
+          description: Generated report
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/Report" }
+  /reports/{id}/pdf:
+    get:
+      operationId: downloadReportPdf
+      tags: [reports]
+      summary: Download a report as a PDF
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Downloaded PDF report
+          content:
+            application/pdf:
+              schema: { type: string, format: binary }
+        "404":
+          description: Report not found
+  /reports/{id}/csv:
+    get:
+      operationId: downloadReportCsv
+      tags: [reports]
+      summary: Download report data as CSV
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Downloaded CSV report
+          content:
+            text/csv:
+              schema: { type: string }
+        "404":
+          description: Report not found
+  /report-schedules:
+    get:
+      operationId: listReportSchedules
+      tags: [reports]
+      summary: List scheduled reports
+      responses:
+        "200":
+          description: Report schedules
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/ReportSchedule" }
+    post:
+      operationId: createReportSchedule
+      tags: [reports]
+      summary: Schedule a weekly or monthly report
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReportScheduleInput" }
+      responses:
+        "201":
+          description: Created schedule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReportSchedule" }
+  /report-schedules/{id}:
+    patch:
+      operationId: updateReportSchedule
+      tags: [reports]
+      summary: Pause or resume a report schedule
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/ReportScheduleUpdate" }
+      responses:
+        "200":
+          description: Updated schedule
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/ReportSchedule" }
+  /admin/audit:
+    get:
+      operationId: listAuditLogs
+      tags: [admin]
+      summary: View recent system audit activity
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema: { type: integer, minimum: 1, maximum: 200 }
+      responses:
+        "200":
+          description: Audit history
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/AuditLog" }
+components:
+  schemas:
+    HealthStatus:
+      type: object
+      properties:
+        status:
+          type: string
+      required:
+        - status
+    LoginInput:
+      type: object
+      properties:
+        email:
+          type: string
+          format: email
+        password:
+          type: string
+          minLength: 8
+      required: [email, password]
+    ChangePasswordInput:
+      type: object
+      properties:
+        currentPassword: { type: string, minLength: 1 }
+        newPassword: { type: string, minLength: 8, maxLength: 128 }
+      required: [currentPassword, newPassword]
+    ProviderSummary:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        email: { type: string }
+      required: [id, name, email]
+    Coverage:
+      type: object
+      properties:
+        id: { type: integer }
+        absentProviderId: { type: integer }
+        absentProviderName: { type: string }
+        coveringProviderId: { type: integer }
+        coveringProviderName: { type: string }
+        startDate: { type: string }
+        endDate: { type: ["string", "null"] }
+        reason: { type: ["string", "null"] }
+        status: { type: string, enum: [active, upcoming, ended] }
+        patientCount: { type: integer }
+      required: [id, absentProviderId, absentProviderName, coveringProviderId, coveringProviderName, startDate, endDate, reason, status, patientCount]
+    CoverageInput:
+      type: object
+      properties:
+        absentProviderId: { type: integer }
+        coveringProviderId: { type: integer }
+        startDate: { type: string }
+        endDate: { type: ["string", "null"] }
+        reason: { type: ["string", "null"], maxLength: 200 }
+      required: [absentProviderId, coveringProviderId, startDate]
+    DeliveryStatus:
+      type: object
+      properties:
+        emailConfigured: { type: boolean }
+        emailSender: { type: ["string", "null"] }
+        smsProvider: { type: ["string", "null"] }
+        smsConfigured: { type: boolean }
+        offlineFallback: { type: boolean }
+        otpEnabled: { type: boolean }
+      required: [emailConfigured, emailSender, smsProvider, smsConfigured, offlineFallback, otpEnabled]
+    DeliveryTestInput:
+      type: object
+      properties:
+        channel: { type: string, enum: [email, sms] }
+        to: { type: string, minLength: 3, maxLength: 120 }
+      required: [channel, to]
+    DeliveryTestResult:
+      type: object
+      properties:
+        delivered: { type: boolean }
+        message: { type: string }
+      required: [delivered, message]
+    PatientAccountInput:
+      type: object
+      properties:
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8, maxLength: 128 }
+        phone: { type: ["string", "null"], maxLength: 20 }
+      required: [email, password]
+    PatientAccount:
+      type: object
+      properties:
+        userId: { type: integer }
+        email: { type: string }
+      required: [userId, email]
+    RiskFactor:
+      type: object
+      properties:
+        feature: { type: string }
+        label: { type: string }
+        value: { type: number }
+        typical: { type: number }
+        impact: { type: number }
+        text: { type: string }
+      required: [feature, label, value, typical, impact, text]
+    RiskPrediction:
+      type: object
+      properties:
+        patientId: { type: integer }
+        patientName: { type: string }
+        riskLevel: { type: string, enum: [low, moderate, high] }
+        riskScore: { type: integer }
+        probLow: { type: number }
+        probModerate: { type: number }
+        probHigh: { type: number }
+        factors: { type: array, items: { $ref: "#/components/schemas/RiskFactor" } }
+        createdAt: { type: string }
+      required: [patientId, patientName, riskLevel, riskScore, probLow, probModerate, probHigh, factors, createdAt]
+    RiskHistoryPoint:
+      type: object
+      properties:
+        riskScore: { type: integer }
+        riskLevel: { type: string }
+        createdAt: { type: string }
+      required: [riskScore, riskLevel, createdAt]
+    PatientRiskDetail:
+      type: object
+      properties:
+        prediction:
+          oneOf:
+            - $ref: "#/components/schemas/RiskPrediction"
+            - type: "null"
+        history: { type: array, items: { $ref: "#/components/schemas/RiskHistoryPoint" } }
+        careRecommendations: { type: array, items: { type: string } }
+        patientTasks: { type: array, items: { type: string } }
+        healthTips: { type: array, items: { type: string } }
+      required: [prediction, history, careRecommendations, patientTasks, healthTips]
+    FeatureImportance:
+      type: object
+      properties:
+        feature: { type: string }
+        label: { type: string }
+        importance: { type: number }
+      required: [feature, label, importance]
+    RiskModel:
+      type: object
+      properties:
+        id: { type: integer }
+        algorithm: { type: string }
+        trees: { type: integer }
+        maxDepth: { type: integer }
+        samples: { type: integer }
+        classLow: { type: integer }
+        classModerate: { type: integer }
+        classHigh: { type: integer }
+        oobAccuracy: { type: ["number", "null"] }
+        featureImportance: { type: array, items: { $ref: "#/components/schemas/FeatureImportance" } }
+        trainedAt: { type: string }
+      required: [id, algorithm, trees, maxDepth, samples, classLow, classModerate, classHigh, oobAccuracy, featureImportance, trainedAt]
+    RiskModelOverview:
+      type: object
+      properties:
+        model:
+          oneOf:
+            - $ref: "#/components/schemas/RiskModel"
+            - type: "null"
+        parameters: { type: array, items: { type: string } }
+        windowDays: { type: integer }
+        horizonDays: { type: integer }
+      required: [model, parameters, windowDays, horizonDays]
+    RiskTrainResult:
+      type: object
+      properties:
+        model:
+          oneOf:
+            - $ref: "#/components/schemas/RiskModel"
+            - type: "null"
+        predictions: { type: integer }
+        message: { type: string }
+      required: [model, predictions, message]
+    LabResult:
+      type: object
+      properties:
+        id: { type: integer }
+        patientId: { type: integer }
+        category: { type: string, enum: [lab, prescription] }
+        title: { type: string }
+        fileName: { type: string }
+        mimeType: { type: string }
+        sizeBytes: { type: integer }
+        notes: { type: ["string", "null"] }
+        uploadedByName: { type: string }
+        reviewComment: { type: ["string", "null"] }
+        reviewedByName: { type: ["string", "null"] }
+        reviewedAt: { type: ["string", "null"] }
+        createdAt: { type: string }
+      required: [id, patientId, category, title, fileName, mimeType, sizeBytes, notes, uploadedByName, reviewComment, reviewedByName, reviewedAt, createdAt]
+    LabResultInput:
+      type: object
+      properties:
+        title: { type: string, minLength: 1, maxLength: 120 }
+        fileName: { type: string, minLength: 1, maxLength: 200 }
+        mimeType: { type: string }
+        dataBase64: { type: string }
+        notes: { type: ["string", "null"], maxLength: 500 }
+        category: { type: string, enum: [lab, prescription], description: "lab (default) or prescription. Only doctors can upload prescriptions." }
+      required: [title, fileName, mimeType, dataBase64]
+    LabReviewInput:
+      type: object
+      properties:
+        comment: { type: string, minLength: 1, maxLength: 1000 }
+      required: [comment]
+    Appointment:
+      type: object
+      properties:
+        id: { type: integer }
+        patientId: { type: integer }
+        patientName: { type: string }
+        providerId: { type: ["integer", "null"] }
+        providerName: { type: ["string", "null"] }
+        scheduledAt: { type: string }
+        reason: { type: string }
+        status: { type: string, enum: [scheduled, completed, cancelled] }
+        notes: { type: ["string", "null"] }
+      required: [id, patientId, patientName, providerId, providerName, scheduledAt, reason, status, notes]
+    AppointmentInput:
+      type: object
+      properties:
+        patientId: { type: integer }
+        scheduledAt: { type: string }
+        reason: { type: string, minLength: 1, maxLength: 200 }
+      required: [patientId, scheduledAt, reason]
+    AppointmentUpdate:
+      type: object
+      properties:
+        status: { type: string, enum: [scheduled, completed, cancelled] }
+        scheduledAt: { type: string }
+        notes: { type: ["string", "null"], maxLength: 1000 }
+    AssistantInput:
+      type: object
+      properties:
+        message: { type: string, minLength: 1, maxLength: 500 }
+      required: [message]
+    AssistantReply:
+      type: object
+      properties:
+        reply: { type: string }
+        relevant: { type: boolean }
+        suggestions: { type: array, items: { type: string } }
+      required: [reply, relevant, suggestions]
+    LoginChallenge:
+      type: object
+      properties:
+        otpRequired: { type: boolean }
+        challengeId: { type: ["string", "null"] }
+        channels:
+          type: array
+          items: { type: string, enum: [email, sms] }
+        maskedEmail: { type: ["string", "null"] }
+        maskedPhone: { type: ["string", "null"] }
+        user:
+          oneOf:
+            - $ref: "#/components/schemas/AuthUser"
+            - type: "null"
+      required: [otpRequired, challengeId, channels, maskedEmail, maskedPhone, user]
+    OtpSendInput:
+      type: object
+      properties:
+        challengeId: { type: string }
+        channel: { type: string, enum: [email, sms] }
+      required: [challengeId, channel]
+    OtpSendResult:
+      type: object
+      properties:
+        channel: { type: string, enum: [email, sms] }
+        sentTo: { type: string }
+        delivered: { type: boolean }
+        offlineCode: { type: ["string", "null"] }
+        message: { type: string }
+        expiresInSeconds: { type: integer }
+      required: [channel, sentTo, delivered, offlineCode, message, expiresInSeconds]
+    OtpVerifyInput:
+      type: object
+      properties:
+        challengeId: { type: string }
+        code: { type: string, minLength: 6, maxLength: 6 }
+      required: [challengeId, code]
+    MedicationProgress:
+      type: object
+      properties:
+        medicationId: { type: integer }
+        name: { type: string }
+        dosage: { type: string }
+        active: { type: boolean }
+        startDate: { type: string }
+        endDate: { type: ["string", "null"] }
+        status: { type: string, enum: [upcoming, active, completed, inactive] }
+        totalDays: { type: ["integer", "null"] }
+        dayNumber: { type: integer }
+        plannedDoses: { type: ["integer", "null"] }
+        takenCount: { type: integer }
+        missedCount: { type: integer }
+        skippedCount: { type: integer }
+        pendingCount: { type: integer }
+        upcomingCount: { type: integer }
+        adherenceRate: { type: integer }
+        riskLevel: { type: string, enum: [green, yellow, red, none] }
+      required: [medicationId, name, dosage, active, startDate, endDate, status, totalDays, dayNumber, plannedDoses, takenCount, missedCount, skippedCount, pendingCount, upcomingCount, adherenceRate, riskLevel]
+    MessageThread:
+      type: object
+      properties:
+        patientId: { type: integer }
+        patientName: { type: string }
+        lastMessage: { type: ["string", "null"] }
+        lastSenderName: { type: ["string", "null"] }
+        lastMessageAt: { type: ["string", "null"] }
+        unreadCount: { type: integer }
+      required: [patientId, patientName, lastMessage, lastSenderName, lastMessageAt, unreadCount]
+    Message:
+      type: object
+      properties:
+        id: { type: integer }
+        patientId: { type: integer }
+        senderId: { type: ["integer", "null"] }
+        senderName: { type: string }
+        senderRole: { type: string }
+        body: { type: string }
+        createdAt: { type: string }
+      required: [id, patientId, senderId, senderName, senderRole, body, createdAt]
+    MessageInput:
+      type: object
+      properties:
+        body: { type: string, minLength: 1, maxLength: 2000 }
+      required: [body]
+    AuthUser:
+      type: object
+      properties:
+        id: { type: integer }
+        name: { type: string }
+        email: { type: string }
+        role: { type: string, enum: [admin, provider, patient, caregiver] }
+        active: { type: boolean }
+        mustChangePassword: { type: boolean }
+      required: [id, name, email, role, active, mustChangePassword]
+    User:
+      allOf:
+        - $ref: "#/components/schemas/AuthUser"
+        - type: object
+          properties:
+            phone: { type: ["string", "null"] }
+            createdAt: { type: string, format: date-time }
+          required: [phone, createdAt]
+    UserInput:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+        email: { type: string, format: email }
+        password: { type: string, minLength: 8 }
+        role: { type: string, enum: [admin, provider, patient, caregiver] }
+        phone: { type: ["string", "null"], maxLength: 20 }
+      required: [name, email, password, role]
+    UserUpdate:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+        email: { type: string, format: email }
+        active: { type: boolean }
+        password: { type: string, minLength: 8 }
+        phone: { type: ["string", "null"], maxLength: 20 }
+    Patient:
+      type: object
+      properties:
+        id: { type: integer }
+        userId: { type: ["integer", "null"] }
+        name: { type: string }
+        age: { type: integer }
+        sex: { type: string, enum: [female, male, other, not_specified] }
+        phone: { type: ["string", "null"] }
+        email: { type: ["string", "null"] }
+        conditions: { type: array, items: { type: string } }
+        allergies: { type: array, items: { type: string } }
+        notes: { type: ["string", "null"] }
+        assignedProviderId: { type: ["integer", "null"] }
+        assignedProviderName: { type: ["string", "null"] }
+        coveringProviderName: { type: ["string", "null"] }
+        active: { type: boolean }
+        createdAt: { type: string, format: date-time }
+      required: [id, userId, name, age, sex, phone, email, conditions, allergies, notes, assignedProviderId, assignedProviderName, coveringProviderName, active, createdAt]
+    PatientDetail:
+      allOf:
+        - $ref: "#/components/schemas/Patient"
+        - type: object
+          properties:
+            medications:
+              type: array
+              items: { $ref: "#/components/schemas/Medication" }
+            recentDoses:
+              type: array
+              items: { $ref: "#/components/schemas/Dose" }
+          required: [medications, recentDoses]
+    PatientInput:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+        age: { type: integer, minimum: 0, maximum: 120 }
+        sex: { type: string, enum: [female, male, other, not_specified] }
+        phone: { type: string }
+        email: { type: string, format: email }
+        conditions: { type: array, items: { type: string } }
+        allergies: { type: array, items: { type: string } }
+        notes: { type: string }
+        assignedProviderId: { type: ["integer", "null"] }
+      required: [name, age, sex]
+    PatientUpdate:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+        age: { type: integer, minimum: 0, maximum: 120 }
+        sex: { type: string, enum: [female, male, other, not_specified] }
+        phone: { type: ["string", "null"] }
+        email: { type: ["string", "null"], format: email }
+        conditions: { type: array, items: { type: string } }
+        allergies: { type: array, items: { type: string } }
+        notes: { type: ["string", "null"] }
+        active: { type: boolean }
+        assignedProviderId: { type: ["integer", "null"] }
+    Medication:
+      type: object
+      properties:
+        id: { type: integer }
+        patientId: { type: integer }
+        name: { type: string }
+        dosage: { type: string }
+        form: { type: string }
+        frequency: { type: string, enum: [daily, specific_days, every_hours] }
+        timesPerDay: { type: integer }
+        scheduleTimes: { type: array, items: { type: string } }
+        daysOfWeek: { type: array, items: { type: integer, minimum: 0, maximum: 6 } }
+        intervalHours: { type: ["integer", "null"] }
+        startDate: { type: string, format: date }
+        endDate: { type: ["string", "null"], format: date }
+        instructions: { type: ["string", "null"] }
+        prescribedBy: { type: ["integer", "null"] }
+        prescribedByName: { type: ["string", "null"] }
+        active: { type: boolean }
+      required: [id, patientId, name, dosage, form, frequency, timesPerDay, scheduleTimes, daysOfWeek, intervalHours, startDate, endDate, instructions, prescribedBy, active]
+    MedicationInput:
+      type: object
+      properties:
+        patientId: { type: integer }
+        name: { type: string, minLength: 1 }
+        dosage: { type: string, minLength: 1 }
+        form: { type: string }
+        frequency: { type: string, enum: [daily, specific_days, every_hours] }
+        timesPerDay: { type: integer, minimum: 1, maximum: 24 }
+        scheduleTimes: { type: array, items: { type: string, pattern: "^([01]?[0-9]|2[0-3]):[0-5][0-9]$" } }
+        daysOfWeek: { type: array, items: { type: integer, minimum: 0, maximum: 6 } }
+        intervalHours: { type: ["integer", "null"], minimum: 1, maximum: 24 }
+        startDate: { type: string, format: date }
+        endDate: { type: ["string", "null"], format: date }
+        instructions: { type: string }
+      required: [patientId, name, dosage, form, frequency, timesPerDay, scheduleTimes, daysOfWeek, startDate]
+    MedicationUpdate:
+      type: object
+      properties:
+        name: { type: string, minLength: 1 }
+        dosage: { type: string, minLength: 1 }
+        form: { type: string }
+        frequency: { type: string, enum: [daily, specific_days, every_hours] }
+        timesPerDay: { type: integer, minimum: 1, maximum: 24 }
+        scheduleTimes: { type: array, items: { type: string } }
+        daysOfWeek: { type: array, items: { type: integer, minimum: 0, maximum: 6 } }
+        intervalHours: { type: ["integer", "null"] }
+        startDate: { type: string, format: date }
+        endDate: { type: ["string", "null"], format: date }
+        instructions: { type: ["string", "null"] }
+        active: { type: boolean }
+    Dose:
+      type: object
+      properties:
+        id: { type: integer }
+        patientId: { type: integer }
+        medicationId: { type: integer }
+        medicationName: { type: string }
+        dosage: { type: string }
+        scheduledTime: { type: string, format: date-time }
+        takenTime: { type: ["string", "null"], format: date-time }
+        status: { type: string, enum: [scheduled, taken, missed, skipped] }
+        notes: { type: ["string", "null"] }
+        loggedBy: { type: ["string", "null"] }
+      required: [id, patientId, medicationId, medicationName, dosage, scheduledTime, takenTime, status, notes, loggedBy]
+    DoseStatusInput:
+      type: object
+      properties:
+        status: { type: string, enum: [taken, missed, skipped, scheduled] }
+        notes: { type: string }
+        takenAt: { type: string, description: "When the dose was actually taken (used when syncing doses logged offline)." }
+      required: [status]
+    DemoDoseInput:
+      type: object
+      properties:
+        patientId: { type: integer }
+        medicationId: { type: integer }
+      required: [patientId, medicationId]
+    TrendPoint:
+      type: object
+      properties:
+        date: { type: string }
+        adherenceRate: { type: number }
+      required: [date, adherenceRate]
+    MedicationMetric:
+      type: object
+      properties:
+        medicationId: { type: integer }
+        medicationName: { type: string }
+        adherenceRate: { type: number }
+        scheduledCount: { type: integer }
+        missedCount: { type: integer }
+      required: [medicationId, medicationName, adherenceRate, scheduledCount, missedCount]
+    PatientRisk:
+      type: object
+      properties:
+        patientId: { type: integer }
+        patientName: { type: string }
+        adherenceRate: { type: number }
+        riskLevel: { type: string, enum: [green, yellow, red] }
+        missedCount: { type: integer }
+      required: [patientId, patientName, adherenceRate, riskLevel, missedCount]
+    TimeMetric:
+      type: object
+      properties:
+        period: { type: string }
+        missedCount: { type: integer }
+        scheduledCount: { type: integer }
+      required: [period, missedCount, scheduledCount]
+    Analytics:
+      type: object
+      properties:
+        totalPatients: { type: integer }
+        totalDoses: { type: integer }
+        takenCount: { type: integer }
+        missedCount: { type: integer }
+        skippedCount: { type: integer }
+        adherenceRate: { type: number }
+        highRiskPatients: { type: integer }
+        trend:
+          type: array
+          items: { $ref: "#/components/schemas/TrendPoint" }
+        byMedication:
+          type: array
+          items: { $ref: "#/components/schemas/MedicationMetric" }
+        byTimeOfDay:
+          type: array
+          items: { $ref: "#/components/schemas/TimeMetric" }
+        riskPatients:
+          type: array
+          items: { $ref: "#/components/schemas/PatientRisk" }
+      required: [totalPatients, totalDoses, takenCount, missedCount, skippedCount, adherenceRate, highRiskPatients, trend, byMedication, byTimeOfDay, riskPatients]
+    AiInsight:
+      type: object
+      properties:
+        id: { type: integer }
+        patientId: { type: integer }
+        summary: { type: string }
+        riskLevel: { type: string, enum: [green, yellow, red] }
+        recommendations: { type: array, items: { type: string } }
+        source: { type: string, enum: [claude, rules] }
+        createdAt: { type: string, format: date-time }
+      required: [id, patientId, summary, riskLevel, recommendations, source, createdAt]
+    Notification:
+      type: object
+      properties:
+        id: { type: integer }
+        patientId: { type: ["integer", "null"] }
+        kind: { type: string }
+        title: { type: string }
+        message: { type: string }
+        read: { type: boolean }
+        createdAt: { type: string, format: date-time }
+      required: [id, patientId, kind, title, message, read, createdAt]
+    Report:
+      type: object
+      properties:
+        id: { type: integer }
+        patientId: { type: ["integer", "null"] }
+        patientName: { type: ["string", "null"] }
+        period: { type: string }
+        rangeStart: { type: string, format: date }
+        rangeEnd: { type: string, format: date }
+        adherenceRate: { type: number }
+        summary: { type: string }
+        generatedBy: { type: ["integer", "null"] }
+        createdAt: { type: string, format: date-time }
+      required: [id, patientId, patientName, period, rangeStart, rangeEnd, adherenceRate, summary, generatedBy, createdAt]
+    ReportInput:
+      type: object
+      properties:
+        period: { type: string, enum: [weekly, monthly] }
+        patientId: { type: ["integer", "null"] }
+      required: [period]
+    ReportSchedule:
+      type: object
+      properties:
+        id: { type: integer }
+        patientId: { type: ["integer", "null"] }
+        cadence: { type: string, enum: [weekly, monthly] }
+        nextRunAt: { type: string, format: date-time }
+        active: { type: boolean }
+      required: [id, patientId, cadence, nextRunAt, active]
+    ReportScheduleInput:
+      type: object
+      properties:
+        patientId: { type: ["integer", "null"] }
+        cadence: { type: string, enum: [weekly, monthly] }
+      required: [cadence]
+    ReportScheduleUpdate:
+      type: object
+      properties:
+        active: { type: boolean }
+      required: [active]
+    SimulationResult:
+      type: object
+      properties:
+        shiftedCount: { type: integer }
+        missedCount: { type: integer }
+      required: [shiftedCount, missedCount]
+    AuditLog:
+      type: object
+      properties:
+        id: { type: integer }
+        userId: { type: ["integer", "null"] }
+        userName: { type: ["string", "null"] }
+        action: { type: string }
+        entityType: { type: string }
+        entityId: { type: ["integer", "null"] }
+        details: { type: object, additionalProperties: true }
+        createdAt: { type: string, format: date-time }
+      required: [id, userId, userName, action, entityType, entityId, details, createdAt]
+
