@@ -130,7 +130,7 @@ router.patch("/doses/:id/status", async (req, res): Promise<void> => {
     }
   }
   const roleName = { patient: "patient", caregiver: "caregiver", provider: "doctor", admin: "admin" }[user.role] ?? user.role;
-  const [dose] = await db
+  await db
     .update(doseLogsTable)
     .set({
       status: parsed.data.status,
@@ -143,7 +143,8 @@ router.patch("/doses/:id/status", async (req, res): Promise<void> => {
           : null),
     })
     .where(eq(doseLogsTable.id, existing.id))
-    .returning();
+    ;
+  const [dose] = await db.select().from(doseLogsTable).where(eq(doseLogsTable.id, existing.id)).limit(1);
   const [medication] = await db
     .select({ name: medicationsTable.name, dosage: medicationsTable.dosage })
     .from(medicationsTable)
@@ -193,7 +194,7 @@ router.post(
       res.status(404).json({ error: "Active medication not found for this patient." });
       return;
     }
-    const [dose] = await db
+    const inserted = await db
       .insert(doseLogsTable)
       .values({
         patientId: medication.patientId,
@@ -201,7 +202,8 @@ router.post(
         scheduledTime: new Date(),
         status: "scheduled",
       })
-      .returning();
+      ;
+    const [dose] = await db.select().from(doseLogsTable).where(eq(doseLogsTable.id, Number(inserted[0].insertId))).limit(1);
     await writeAuditLog(user.id, "demo_dose_created", "dose", dose.id, {
       patientId: medication.patientId,
       medicationId: medication.id,

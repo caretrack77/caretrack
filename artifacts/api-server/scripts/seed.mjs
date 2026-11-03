@@ -1,18 +1,47 @@
 import bcrypt from "bcryptjs";
-import pg from "pg";
+import mysql from "mysql2/promise";
 
-const { Pool } = pg;
 if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL is required to seed CareTrack.");
 }
 
-// Hosted databases such as Supabase require TLS; local Postgres usually does not.
-const isLocal = /@(localhost|127\.0\.0\.1)(:|\/)/.test(process.env.DATABASE_URL);
-const pool = new Pool({
-  connectionString: process.env.DATABASE_URL,
-  ssl: isLocal ? false : { rejectUnauthorized: false },
-});
-const client = await pool.connect();
+const pool = mysql.createPool(process.env.DATABASE_URL);
+const connection = await pool.getConnection();
+
+function mysqlQuery(sql, params = []) {
+  let statement = sql
+    .replace(/,\s*read\)/gi, ", `read`)")
+    .replace(/report_data->>'seeded'/g, "JSON_UNQUOTE(JSON_EXTRACT(report_data, '$.seeded'))")
+    .replace(/ON CONFLICT\s*\([^)]*\)\s*DO NOTHING/gi, "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)")
+    .replace(/ON CONFLICT\s+DO NOTHING/gi, "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)")
+    .replace(/ON CONFLICT\s*\([^)]*\)\s*DO UPDATE SET/gi, "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id),")
+    .replace(/EXCLUDED\.([a-z_]+)/gi, (_, column) => `VALUES(${column})`);
+  const queryParams = [];
+  statement = statement.replace(
+    /=\s*ANY\(\$(\d+)\)|\$(\d+)/g,
+    (match, anyIndex, parameterIndex) => {
+      const index = Number(anyIndex ?? parameterIndex) - 1;
+      const value = params[index];
+      queryParams.push(
+        anyIndex || !Array.isArray(value) ? value : JSON.stringify(value),
+      );
+      return anyIndex ? "IN (?)" : "?";
+    },
+  );
+  const hasReturningId = /\sRETURNING id\s*$/i.test(statement);
+  statement = statement.replace(/\sRETURNING id\s*$/i, "");
+  return connection.query(statement, queryParams).then(([rows]) => {
+    if (hasReturningId) {
+      return { rows: [{ id: rows.insertId }] };
+    }
+    return { rows: Array.isArray(rows) ? rows : [] };
+  });
+}
+
+const client = {
+  query: mysqlQuery,
+  release: () => connection.release(),
+};
 
 // Every demo account uses the same password so the login page quick-pick buttons work.
 const DEMO_PASSWORD = "caretrack-demo";
@@ -229,7 +258,7 @@ try {
       `INSERT INTO caretrack_medications
          (patient_id, name, dosage, form, frequency, times_per_day, schedule_times,
           days_of_week, start_date, end_date, instructions, prescribed_by, active)
-       VALUES ($1, $2, $3, $4, 'daily', $5, $6, '{}', $7, $8, $9, $10, true)
+       VALUES ($1, $2, $3, $4, 'daily', $5, $6, '[]', $7, $8, $9, $10, true)
        RETURNING id`,
       [
         patientIds[patientIndex],

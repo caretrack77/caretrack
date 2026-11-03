@@ -12,7 +12,7 @@ CareTrack helps healthcare providers, patients, and caregivers stay on top of me
 |---|---|
 | Frontend | React 19, Vite, Tailwind CSS, Recharts, TanStack Query, Wouter |
 | Backend | Node.js, Express 5, TypeScript |
-| Database | PostgreSQL (Supabase) with Drizzle ORM |
+| Database | Local MySQL 8 with Drizzle ORM |
 | Auth | Session cookies (HTTP-only), bcrypt password hashing, role-based access control |
 | AI | Anthropic Claude API, with a rule-based fallback |
 | Reports | PDFKit (PDF) and CSV export |
@@ -38,29 +38,107 @@ lib/
 
 ## Setup
 
-**Requirements:** Node.js 22+ and pnpm 10+ (`npm install -g pnpm`).
+**Requirements:** Node.js 22+, pnpm 10+ (`npm install -g pnpm`), and MySQL 8.0+.
+
+On Windows, make sure the MySQL service is running. If the service is named
+`MySQL90`, open PowerShell as Administrator and run:
+
+```powershell
+Start-Service MySQL90
+```
+
+If you are using **Command Prompt (cmd.exe)** instead of PowerShell, run:
+
+```cmd
+net start MySQL90
+```
+
+If Command Prompt reports **System error 1058**, the service is disabled.
+From an Administrator Command Prompt, enable it first:
+
+```cmd
+sc config MySQL90 start= auto
+net start MySQL90
+```
+
+If the service is stopped, the app and seed command fail with
+`ECONNREFUSED 127.0.0.1:3306`. Check the service status with:
+
+```powershell
+Get-Service MySQL90
+```
+
+The status must be `Running` before starting CareTrack.
+
+If `mysql` is not recognized, use the full client path or add this directory
+to your PATH:
+
+```text
+C:\Program Files\MySQL\MySQL Server 9.0\bin
+```
 
 1. **Install dependencies**
    ```bash
    pnpm install
    ```
-2. **Configure the environment.** Copy `.env.example` to `.env` and fill in:
-   - `DATABASE_URL`: the Supabase **Session pooler** connection string (Supabase dashboard > Connect). The direct `db.<ref>.supabase.co` host only works on IPv6 networks.
+2. **Configure the environment.** Copy `.env.example` to `.env` and replace the placeholders:
+   - `DATABASE_URL`: use the MySQL username and password from your local installation, for example `mysql://root:YOUR_MYSQL_PASSWORD@127.0.0.1:3306/health_monitoring`.
    - `SESSION_SECRET`: any long random string.
    - `ANTHROPIC_API_KEY` *(optional)*: enables Claude-generated insights. Without it, CareTrack uses its rule-based engine.
-3. **Create the database tables**
+3. **Create the MySQL database and tables.** Run this from **Command Prompt** so `<` is treated as input redirection:
+   ```bash
+   mysql -u root -p < database.sql
+   ```
+   On Windows, if `mysql` is not in PATH, run this from **Command Prompt**:
+   ```cmd
+   "C:\Program Files\MySQL\MySQL Server 9.0\bin\mysql.exe" -u root -p < database.sql
+   ```
+   Enter the MySQL root password when prompted. This password is created during MySQL installation; it is not defined by `database.sql` or `.env.example`.
+   The SQL creates the `health_monitoring` database, loads the supplied clinical tables and seed data, and adds the `caretrack_*` compatibility tables required by the current API.
+4. **Apply Drizzle schema updates when needed.** Run this only when the Drizzle schema changes; do not use it as a replacement for importing `database.sql`.
    ```bash
    pnpm db:push
    ```
-4. **Load the demo data** (safe to re-run; it resets demo reports, insights, and notifications)
+5. **Load the demo data** after the database import:
    ```bash
    pnpm db:seed
    ```
-5. **Start the app**
+   The seed command is intended for a newly imported database. It resets demo reports,
+   insights, and notifications, but repeated runs may require cleaning or re-importing
+   the database if duplicate medication records cause a foreign-key error.
+6. **Start the app**
    ```bash
    pnpm dev
    ```
    Open **http://localhost:5173**. The API runs on port 8080, and Vite forwards `/api` requests to it.
+
+### Windows run sequence
+
+From the repository root, run these commands in order. Use an Administrator PowerShell
+to start MySQL:
+
+```powershell
+cd "D:\My Files\Downloads\Caretrack\caretrack"
+Start-Service MySQL90
+```
+
+Then open **Command Prompt**, import the database, and return to the repository root:
+
+```cmd
+cd /d "D:\My Files\Downloads\Caretrack\caretrack"
+"C:\Program Files\MySQL\MySQL Server 9.0\bin\mysql.exe" -u root -p < database.sql
+```
+
+Finally, from the repository root, run:
+
+```bash
+pnpm db:seed
+pnpm dev
+```
+
+Alternatively, run `net start MySQL90` from an Administrator Command Prompt. Update
+`DATABASE_URL` in `.env` with the MySQL username and password used by your
+local installation before running the seed command.
 
 ### Production
 
@@ -197,7 +275,8 @@ The model retrains automatically every 6 hours, and on demand from **AI risk pre
 | Command | Purpose |
 |---|---|
 | `pnpm dev` | Run the API and the web app together |
-| `pnpm db:push` | Apply schema changes to the database |
+| `mysql -u root -p < database.sql` | Create or initialize the local MySQL database |
+| `pnpm db:push` | Apply Drizzle schema changes to the MySQL database |
 | `pnpm db:seed` | Load or reset the demo data |
 | `pnpm typecheck` | Typecheck every package |
 | `pnpm --filter @workspace/api-spec run codegen` | Regenerate the API client and validators after editing `openapi.yaml` |

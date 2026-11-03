@@ -127,7 +127,7 @@ router.post("/patients/:id/lab-results", async (req, res): Promise<void> => {
     res.status(400).json({ error: "The file must be smaller than 5 MB." });
     return;
   }
-  const [lab] = await db
+  const insertedLab = await db
     .insert(labResultsTable)
     .values({
       patientId,
@@ -140,7 +140,8 @@ router.post("/patients/:id/lab-results", async (req, res): Promise<void> => {
       encryptedData: encryptBuffer(data),
       notes: parsed.data.notes?.trim() || null,
     })
-    .returning();
+    ;
+  const [lab] = await db.select().from(labResultsTable).where(eq(labResultsTable.id, Number(insertedLab[0].insertId))).limit(1);
   const [patient] = await db.select({ name: patientsTable.name }).from(patientsTable).where(eq(patientsTable.id, patientId)).limit(1);
   if (user.role === "patient") {
     await notify(await careTeamProviderIds(patientId), patientId, "lab", `New lab result from ${patient?.name}`, `"${lab.title}" was uploaded and is waiting for your review.`);
@@ -262,10 +263,11 @@ router.post("/appointments", requireRoles("admin", "provider"), async (req, res)
       .limit(1);
     providerId = assigned?.id ?? null;
   }
-  const [appt] = await db
+  const insertedAppt = await db
     .insert(appointmentsTable)
     .values({ patientId: parsed.data.patientId, providerId, scheduledAt: at, reason: parsed.data.reason.trim(), createdBy: user.id })
-    .returning();
+    ;
+  const [appt] = await db.select().from(appointmentsTable).where(eq(appointmentsTable.id, Number(insertedAppt[0].insertId))).limit(1);
   await notify(await patientSideUsers(appt.patientId), appt.patientId, "appointment", "Check-up scheduled", `${appt.reason} on ${whenText(at)}.`);
   await writeAuditLog(user.id, "appointment_created", "appointment", appt.id, { patientId: appt.patientId });
   res.status(201).json((await appointmentRows([], appt.id))[0]);
@@ -315,7 +317,15 @@ router.patch("/appointments/:id", requireRoles("admin", "provider"), async (req,
 /** Background job: remind patients and doctors about check-ups in the next 24 hours. */
 export async function sendAppointmentReminders(): Promise<number> {
   const now = new Date();
-  const due = await db
+  const dueCandidates = await db.select({ id: appointmentsTable.id }).from(appointmentsTable).where(
+    and(
+      eq(appointmentsTable.status, "scheduled"),
+      gte(appointmentsTable.scheduledAt, now),
+      lte(appointmentsTable.scheduledAt, new Date(now.getTime() + 24 * 60 * 60 * 1000)),
+      isNull(appointmentsTable.reminderSentAt),
+    ),
+  );
+  await db
     .update(appointmentsTable)
     .set({ reminderSentAt: now })
     .where(
@@ -325,8 +335,10 @@ export async function sendAppointmentReminders(): Promise<number> {
         lte(appointmentsTable.scheduledAt, new Date(now.getTime() + 24 * 60 * 60 * 1000)),
         isNull(appointmentsTable.reminderSentAt),
       ),
-    )
-    .returning();
+    );
+  const due = dueCandidates.length
+    ? await db.select().from(appointmentsTable).where(inArray(appointmentsTable.id, dueCandidates.map((row) => row.id)))
+    : [];
   for (const appt of due) {
     const message = `${appt.reason} on ${whenText(appt.scheduledAt)}.`;
     await notify(await patientSideUsers(appt.patientId), appt.patientId, "appointment", "Check-up tomorrow", message);

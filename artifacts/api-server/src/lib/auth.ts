@@ -430,11 +430,12 @@ router.post("/auth/change-password", authenticate, requireUser, async (req, res)
     res.status(400).json({ error: "Choose a password different from your current one." });
     return;
   }
-  const [updated] = await db
+  await db
     .update(usersTable)
     .set({ passwordHash: await bcrypt.hash(parsed.data.newPassword.trim(), 12), mustChangePassword: false })
     .where(eq(usersTable.id, user.id))
-    .returning();
+    ;
+  const [updated] = await db.select().from(usersTable).where(eq(usersTable.id, user.id)).limit(1);
   // Sign out every other device; keep this session.
   const token = req.cookies?.[SESSION_COOKIE];
   await db
@@ -451,10 +452,8 @@ router.get("/auth/me", authenticate, requireUser, (_req, res): void => {
 router.post("/auth/logout", async (req, res): Promise<void> => {
   const token = req.cookies?.[SESSION_COOKIE];
   if (typeof token === "string" && token.length >= 32) {
-    const [session] = await db
-      .delete(sessionsTable)
-      .where(eq(sessionsTable.tokenHash, hashToken(token)))
-      .returning({ userId: sessionsTable.userId });
+    const [session] = await db.select({ userId: sessionsTable.userId }).from(sessionsTable).where(eq(sessionsTable.tokenHash, hashToken(token))).limit(1);
+    await db.delete(sessionsTable).where(eq(sessionsTable.tokenHash, hashToken(token)));
     if (session) {
       await writeAuditLog(session.userId, "logout", "user", session.userId);
     }

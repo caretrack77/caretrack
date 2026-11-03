@@ -44,7 +44,7 @@ router.post("/notifications/:id/read", async (req, res): Promise<void> => {
     return;
   }
   const user = currentUser(res)!;
-  const [notification] = await db
+  const inserted = await db
     .update(notificationsTable)
     .set({ read: true })
     .where(
@@ -53,7 +53,8 @@ router.post("/notifications/:id/read", async (req, res): Promise<void> => {
         eq(notificationsTable.userId, user.id),
       ),
     )
-    .returning();
+    ;
+  const [notification] = await db.select().from(notificationsTable).where(eq(notificationsTable.id, Number(inserted[0].insertId))).limit(1);
   if (!notification) {
     res.status(404).json({ error: "Notification not found." });
     return;

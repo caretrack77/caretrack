@@ -1,21 +1,22 @@
+import { sql } from "drizzle-orm";
+
 import {
   boolean,
   date,
+  datetime,
   index,
-  integer,
-  jsonb,
-  real,
-  pgTable,
-  serial,
+  int,
+  json,
+  float,
+  mysqlTable,
   text,
-  timestamp,
   uniqueIndex,
-} from "drizzle-orm/pg-core";
+} from "drizzle-orm/mysql-core";
 
-export const usersTable = pgTable(
+export const usersTable = mysqlTable(
   "caretrack_users",
   {
-    id: serial("id").primaryKey(),
+    id: int("id").autoincrement().primaryKey(),
     name: text("name").notNull(),
     email: text("email").notNull(),
     passwordHash: text("password_hash").notNull(),
@@ -25,35 +26,35 @@ export const usersTable = pgTable(
     // Set when an admin creates the account or resets its password.
     mustChangePassword: boolean("must_change_password").notNull().default(false),
     active: boolean("active").notNull().default(true),
-    createdAt: timestamp("created_at", { withTimezone: true })
+    createdAt: datetime("created_at")
       .notNull()
-      .defaultNow(),
+      .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [uniqueIndex("caretrack_users_email_idx").on(table.email)],
 );
 
-export const patientsTable = pgTable(
+export const patientsTable = mysqlTable(
   "caretrack_patients",
   {
-    id: serial("id").primaryKey(),
-    userId: integer("user_id").references(() => usersTable.id, {
+    id: int("id").autoincrement().primaryKey(),
+    userId: int("user_id").references(() => usersTable.id, {
       onDelete: "set null",
     }),
     name: text("name").notNull(),
-    age: integer("age").notNull(),
+    age: int("age").notNull(),
     sex: text("sex").notNull().default("not_specified"),
     phone: text("phone"),
     email: text("email"),
-    conditions: text("conditions").array().notNull().default([]),
-    allergies: text("allergies").array().notNull().default([]),
+    conditions: json("conditions").$type<string[]>().notNull().default([]),
+    allergies: json("allergies").$type<string[]>().notNull().default([]),
     notes: text("notes"),
     active: boolean("active").notNull().default(true),
-    createdAt: timestamp("created_at", { withTimezone: true })
+    createdAt: datetime("created_at")
       .notNull()
-      .defaultNow(),
-    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .default(sql`CURRENT_TIMESTAMP`),
+    updatedAt: datetime("updated_at")
       .notNull()
-      .defaultNow()
+      .default(sql`CURRENT_TIMESTAMP`)
       .$onUpdate(() => new Date()),
   },
   (table) => [
@@ -63,19 +64,19 @@ export const patientsTable = pgTable(
   ],
 );
 
-export const patientProviderAssignmentsTable = pgTable(
+export const patientProviderAssignmentsTable = mysqlTable(
   "caretrack_patient_provider_assignments",
   {
-    id: serial("id").primaryKey(),
-    patientId: integer("patient_id")
+    id: int("id").autoincrement().primaryKey(),
+    patientId: int("patient_id")
       .notNull()
       .references(() => patientsTable.id, { onDelete: "cascade" }),
-    providerId: integer("provider_id")
+    providerId: int("provider_id")
       .notNull()
       .references(() => usersTable.id, { onDelete: "cascade" }),
-    createdAt: timestamp("created_at", { withTimezone: true })
+    createdAt: datetime("created_at")
       .notNull()
-      .defaultNow(),
+      .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
     uniqueIndex("caretrack_patient_provider_unique_idx").on(
@@ -86,14 +87,14 @@ export const patientProviderAssignmentsTable = pgTable(
   ],
 );
 
-export const patientCaregiverAssignmentsTable = pgTable(
+export const patientCaregiverAssignmentsTable = mysqlTable(
   "caretrack_patient_caregiver_assignments",
   {
-    id: serial("id").primaryKey(),
-    patientId: integer("patient_id")
+    id: int("id").autoincrement().primaryKey(),
+    patientId: int("patient_id")
       .notNull()
       .references(() => patientsTable.id, { onDelete: "cascade" }),
-    caregiverId: integer("caregiver_id")
+    caregiverId: int("caregiver_id")
       .notNull()
       .references(() => usersTable.id, { onDelete: "cascade" }),
   },
@@ -106,31 +107,31 @@ export const patientCaregiverAssignmentsTable = pgTable(
   ],
 );
 
-export const medicationsTable = pgTable(
+export const medicationsTable = mysqlTable(
   "caretrack_medications",
   {
-    id: serial("id").primaryKey(),
-    patientId: integer("patient_id")
+    id: int("id").autoincrement().primaryKey(),
+    patientId: int("patient_id")
       .notNull()
       .references(() => patientsTable.id, { onDelete: "cascade" }),
     name: text("name").notNull(),
     dosage: text("dosage").notNull(),
     form: text("form").notNull().default("tablet"),
     frequency: text("frequency").notNull().default("daily"),
-    timesPerDay: integer("times_per_day").notNull().default(1),
-    scheduleTimes: text("schedule_times").array().notNull().default([]),
-    daysOfWeek: integer("days_of_week").array().notNull().default([]),
-    intervalHours: integer("interval_hours"),
+    timesPerDay: int("times_per_day").notNull().default(1),
+    scheduleTimes: json("schedule_times").$type<string[]>().notNull().default([]),
+    daysOfWeek: json("days_of_week").$type<number[]>().notNull().default([]),
+    intervalHours: int("interval_hours"),
     startDate: date("start_date", { mode: "string" }).notNull(),
     endDate: date("end_date", { mode: "string" }),
     instructions: text("instructions"),
-    prescribedBy: integer("prescribed_by").references(() => usersTable.id, {
+    prescribedBy: int("prescribed_by").references(() => usersTable.id, {
       onDelete: "set null",
     }),
     active: boolean("active").notNull().default(true),
-    createdAt: timestamp("created_at", { withTimezone: true })
+    createdAt: datetime("created_at")
       .notNull()
-      .defaultNow(),
+      .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
     index("caretrack_medications_patient_idx").on(table.patientId),
@@ -138,29 +139,27 @@ export const medicationsTable = pgTable(
   ],
 );
 
-export const doseLogsTable = pgTable(
+export const doseLogsTable = mysqlTable(
   "caretrack_dose_logs",
   {
-    id: serial("id").primaryKey(),
-    patientId: integer("patient_id")
+    id: int("id").autoincrement().primaryKey(),
+    patientId: int("patient_id")
       .notNull()
       .references(() => patientsTable.id, { onDelete: "cascade" }),
-    medicationId: integer("medication_id")
+    medicationId: int("medication_id")
       .notNull()
       .references(() => medicationsTable.id, { onDelete: "cascade" }),
-    scheduledTime: timestamp("scheduled_time", {
-      withTimezone: true,
-    }).notNull(),
-    takenTime: timestamp("taken_time", { withTimezone: true }),
+    scheduledTime: datetime("scheduled_time").notNull(),
+    takenTime: datetime("taken_time"),
     status: text("status").notNull().default("scheduled"),
     notes: text("notes"),
     // Who recorded the status, e.g. "Alex Morgan (patient)" or "System: not logged within 2 hours".
     loggedBy: text("logged_by"),
     // Set once the "dose due" in-app reminder has been sent.
-    reminderSentAt: timestamp("reminder_sent_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true })
+    reminderSentAt: datetime("reminder_sent_at"),
+    createdAt: datetime("created_at")
       .notNull()
-      .defaultNow(),
+      .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
     index("caretrack_dose_status_schedule_idx").on(
@@ -178,35 +177,35 @@ export const doseLogsTable = pgTable(
   ],
 );
 
-export const sessionsTable = pgTable(
+export const sessionsTable = mysqlTable(
   "caretrack_sessions",
   {
     tokenHash: text("token_hash").primaryKey(),
-    userId: integer("user_id")
+    userId: int("user_id")
       .notNull()
       .references(() => usersTable.id, { onDelete: "cascade" }),
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true })
+    expiresAt: datetime("expires_at").notNull(),
+    createdAt: datetime("created_at")
       .notNull()
-      .defaultNow(),
+      .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [index("caretrack_sessions_expiry_idx").on(table.expiresAt)],
 );
 
-export const auditLogsTable = pgTable(
+export const auditLogsTable = mysqlTable(
   "caretrack_audit_logs",
   {
-    id: serial("id").primaryKey(),
-    userId: integer("user_id").references(() => usersTable.id, {
+    id: int("id").autoincrement().primaryKey(),
+    userId: int("user_id").references(() => usersTable.id, {
       onDelete: "set null",
     }),
     action: text("action").notNull(),
     entityType: text("entity_type").notNull(),
-    entityId: integer("entity_id"),
-    details: jsonb("details").notNull().default({}),
-    createdAt: timestamp("created_at", { withTimezone: true })
+    entityId: int("entity_id"),
+    details: json("details").notNull().default({}),
+    createdAt: datetime("created_at")
       .notNull()
-      .defaultNow(),
+      .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
     index("caretrack_audit_user_time_idx").on(table.userId, table.createdAt),
@@ -217,23 +216,23 @@ export const auditLogsTable = pgTable(
   ],
 );
 
-export const notificationsTable = pgTable(
+export const notificationsTable = mysqlTable(
   "caretrack_notifications",
   {
-    id: serial("id").primaryKey(),
-    userId: integer("user_id")
+    id: int("id").autoincrement().primaryKey(),
+    userId: int("user_id")
       .notNull()
       .references(() => usersTable.id, { onDelete: "cascade" }),
-    patientId: integer("patient_id").references(() => patientsTable.id, {
+    patientId: int("patient_id").references(() => patientsTable.id, {
       onDelete: "cascade",
     }),
     kind: text("kind").notNull().default("info"),
     title: text("title").notNull(),
     message: text("message").notNull(),
     read: boolean("read").notNull().default(false),
-    createdAt: timestamp("created_at", { withTimezone: true })
+    createdAt: datetime("created_at")
       .notNull()
-      .defaultNow(),
+      .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
     index("caretrack_notifications_user_time_idx").on(
@@ -244,23 +243,23 @@ export const notificationsTable = pgTable(
   ],
 );
 
-export const aiInsightsTable = pgTable(
+export const aiInsightsTable = mysqlTable(
   "caretrack_ai_insights",
   {
-    id: serial("id").primaryKey(),
-    patientId: integer("patient_id")
+    id: int("id").autoincrement().primaryKey(),
+    patientId: int("patient_id")
       .notNull()
       .references(() => patientsTable.id, { onDelete: "cascade" }),
-    generatedBy: integer("generated_by").references(() => usersTable.id, {
+    generatedBy: int("generated_by").references(() => usersTable.id, {
       onDelete: "set null",
     }),
     summary: text("summary").notNull(),
     riskLevel: text("risk_level").notNull(),
-    recommendations: text("recommendations").array().notNull().default([]),
+    recommendations: json("recommendations").$type<string[]>().notNull().default([]),
     source: text("source").notNull().default("rules"),
-    createdAt: timestamp("created_at", { withTimezone: true })
+    createdAt: datetime("created_at")
       .notNull()
-      .defaultNow(),
+      .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
     index("caretrack_insights_patient_time_idx").on(
@@ -270,25 +269,25 @@ export const aiInsightsTable = pgTable(
   ],
 );
 
-export const reportsTable = pgTable(
+export const reportsTable = mysqlTable(
   "caretrack_reports",
   {
-    id: serial("id").primaryKey(),
-    patientId: integer("patient_id").references(() => patientsTable.id, {
+    id: int("id").autoincrement().primaryKey(),
+    patientId: int("patient_id").references(() => patientsTable.id, {
       onDelete: "set null",
     }),
-    generatedBy: integer("generated_by").references(() => usersTable.id, {
+    generatedBy: int("generated_by").references(() => usersTable.id, {
       onDelete: "set null",
     }),
     period: text("period").notNull(),
     rangeStart: date("range_start", { mode: "string" }).notNull(),
     rangeEnd: date("range_end", { mode: "string" }).notNull(),
-    adherenceRate: integer("adherence_rate").notNull().default(0),
+    adherenceRate: int("adherence_rate").notNull().default(0),
     summary: text("summary").notNull(),
-    reportData: jsonb("report_data").notNull().default({}),
-    createdAt: timestamp("created_at", { withTimezone: true })
+    reportData: json("report_data").notNull().default({}),
+    createdAt: datetime("created_at")
       .notNull()
-      .defaultNow(),
+      .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
     index("caretrack_reports_patient_time_idx").on(
@@ -299,22 +298,22 @@ export const reportsTable = pgTable(
   ],
 );
 
-export const reportSchedulesTable = pgTable(
+export const reportSchedulesTable = mysqlTable(
   "caretrack_report_schedules",
   {
-    id: serial("id").primaryKey(),
-    createdBy: integer("created_by")
+    id: int("id").autoincrement().primaryKey(),
+    createdBy: int("created_by")
       .notNull()
       .references(() => usersTable.id, { onDelete: "cascade" }),
-    patientId: integer("patient_id").references(() => patientsTable.id, {
+    patientId: int("patient_id").references(() => patientsTable.id, {
       onDelete: "cascade",
     }),
     cadence: text("cadence").notNull(),
-    nextRunAt: timestamp("next_run_at", { withTimezone: true }).notNull(),
+    nextRunAt: datetime("next_run_at").notNull(),
     active: boolean("active").notNull().default(true),
-    createdAt: timestamp("created_at", { withTimezone: true })
+    createdAt: datetime("created_at")
       .notNull()
-      .defaultNow(),
+      .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
     index("caretrack_report_schedules_due_idx").on(
@@ -326,24 +325,24 @@ export const reportSchedulesTable = pgTable(
 );
 
 /** Pending two-step logins: password verified, waiting for the one-time code. */
-export const otpChallengesTable = pgTable(
+export const otpChallengesTable = mysqlTable(
   "caretrack_otp_challenges",
   {
-    id: serial("id").primaryKey(),
+    id: int("id").autoincrement().primaryKey(),
     tokenHash: text("token_hash").notNull(),
-    userId: integer("user_id")
+    userId: int("user_id")
       .notNull()
       .references(() => usersTable.id, { onDelete: "cascade" }),
     codeHash: text("code_hash"),
     channel: text("channel"),
-    codeExpiresAt: timestamp("code_expires_at", { withTimezone: true }),
-    lastSentAt: timestamp("last_sent_at", { withTimezone: true }),
-    attempts: integer("attempts").notNull().default(0),
-    expiresAt: timestamp("expires_at", { withTimezone: true }).notNull(),
-    consumedAt: timestamp("consumed_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true })
+    codeExpiresAt: datetime("code_expires_at"),
+    lastSentAt: datetime("last_sent_at"),
+    attempts: int("attempts").notNull().default(0),
+    expiresAt: datetime("expires_at").notNull(),
+    consumedAt: datetime("consumed_at"),
+    createdAt: datetime("created_at")
       .notNull()
-      .defaultNow(),
+      .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
     uniqueIndex("caretrack_otp_token_idx").on(table.tokenHash),
@@ -352,20 +351,20 @@ export const otpChallengesTable = pgTable(
 );
 
 /** Patient and care-team messages. Each patient has one shared conversation. */
-export const messagesTable = pgTable(
+export const messagesTable = mysqlTable(
   "caretrack_messages",
   {
-    id: serial("id").primaryKey(),
-    patientId: integer("patient_id")
+    id: int("id").autoincrement().primaryKey(),
+    patientId: int("patient_id")
       .notNull()
       .references(() => patientsTable.id, { onDelete: "cascade" }),
-    senderId: integer("sender_id").references(() => usersTable.id, {
+    senderId: int("sender_id").references(() => usersTable.id, {
       onDelete: "set null",
     }),
     body: text("body").notNull(),
-    createdAt: timestamp("created_at", { withTimezone: true })
+    createdAt: datetime("created_at")
       .notNull()
-      .defaultNow(),
+      .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
     index("caretrack_messages_patient_time_idx").on(
@@ -376,17 +375,17 @@ export const messagesTable = pgTable(
 );
 
 /** When each user last read each patient's conversation, for unread counts. */
-export const messageReadsTable = pgTable(
+export const messageReadsTable = mysqlTable(
   "caretrack_message_reads",
   {
-    id: serial("id").primaryKey(),
-    userId: integer("user_id")
+    id: int("id").autoincrement().primaryKey(),
+    userId: int("user_id")
       .notNull()
       .references(() => usersTable.id, { onDelete: "cascade" }),
-    patientId: integer("patient_id")
+    patientId: int("patient_id")
       .notNull()
       .references(() => patientsTable.id, { onDelete: "cascade" }),
-    lastReadAt: timestamp("last_read_at", { withTimezone: true }).notNull(),
+    lastReadAt: datetime("last_read_at").notNull(),
   },
   (table) => [
     uniqueIndex("caretrack_message_reads_unique_idx").on(
@@ -400,26 +399,26 @@ export const messageReadsTable = pgTable(
  * Temporary coverage: while a provider is absent, the covering provider can see and
  * manage the absent provider's patients and receives their alerts and messages.
  */
-export const providerCoverageTable = pgTable(
+export const providerCoverageTable = mysqlTable(
   "caretrack_provider_coverage",
   {
-    id: serial("id").primaryKey(),
-    absentProviderId: integer("absent_provider_id")
+    id: int("id").autoincrement().primaryKey(),
+    absentProviderId: int("absent_provider_id")
       .notNull()
       .references(() => usersTable.id, { onDelete: "cascade" }),
-    coveringProviderId: integer("covering_provider_id")
+    coveringProviderId: int("covering_provider_id")
       .notNull()
       .references(() => usersTable.id, { onDelete: "cascade" }),
     startDate: date("start_date", { mode: "string" }).notNull(),
     endDate: date("end_date", { mode: "string" }),
     reason: text("reason"),
-    createdBy: integer("created_by").references(() => usersTable.id, {
+    createdBy: int("created_by").references(() => usersTable.id, {
       onDelete: "set null",
     }),
-    endedAt: timestamp("ended_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true })
+    endedAt: datetime("ended_at"),
+    createdAt: datetime("created_at")
       .notNull()
-      .defaultNow(),
+      .default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
     index("caretrack_coverage_absent_idx").on(table.absentProviderId),
@@ -428,38 +427,38 @@ export const providerCoverageTable = pgTable(
 );
 
 /** One training run of the Random Forest risk model, with its evaluation metrics. */
-export const modelRunsTable = pgTable("caretrack_model_runs", {
-  id: serial("id").primaryKey(),
+export const modelRunsTable = mysqlTable("caretrack_model_runs", {
+  id: int("id").autoincrement().primaryKey(),
   algorithm: text("algorithm").notNull(),
-  trees: integer("trees").notNull(),
-  maxDepth: integer("max_depth").notNull(),
-  samples: integer("samples").notNull(),
-  classDistribution: jsonb("class_distribution").notNull().default({}),
-  oobAccuracy: real("oob_accuracy"),
-  featureImportance: jsonb("feature_importance").notNull().default([]),
-  trainedBy: integer("trained_by").references(() => usersTable.id, { onDelete: "set null" }),
-  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  trees: int("trees").notNull(),
+  maxDepth: int("max_depth").notNull(),
+  samples: int("samples").notNull(),
+  classDistribution: json("class_distribution").notNull().default({}),
+  oobAccuracy: float("oob_accuracy"),
+  featureImportance: json("feature_importance").notNull().default([]),
+  trainedBy: int("trained_by").references(() => usersTable.id, { onDelete: "set null" }),
+  createdAt: datetime("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
 });
 
 /** Predicted risk of non-adherence over the next 7 days, with the factors behind it. */
-export const riskPredictionsTable = pgTable(
+export const riskPredictionsTable = mysqlTable(
   "caretrack_risk_predictions",
   {
-    id: serial("id").primaryKey(),
-    patientId: integer("patient_id")
+    id: int("id").autoincrement().primaryKey(),
+    patientId: int("patient_id")
       .notNull()
       .references(() => patientsTable.id, { onDelete: "cascade" }),
-    modelRunId: integer("model_run_id").references(() => modelRunsTable.id, {
+    modelRunId: int("model_run_id").references(() => modelRunsTable.id, {
       onDelete: "set null",
     }),
     riskLevel: text("risk_level").notNull(),
-    riskScore: integer("risk_score").notNull(),
-    probLow: real("prob_low").notNull(),
-    probModerate: real("prob_moderate").notNull(),
-    probHigh: real("prob_high").notNull(),
-    features: jsonb("features").notNull().default({}),
-    factors: jsonb("factors").notNull().default([]),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    riskScore: int("risk_score").notNull(),
+    probLow: float("prob_low").notNull(),
+    probModerate: float("prob_moderate").notNull(),
+    probHigh: float("prob_high").notNull(),
+    features: json("features").notNull().default({}),
+    factors: json("factors").notNull().default([]),
+    createdAt: datetime("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
     index("caretrack_risk_patient_time_idx").on(table.patientId, table.createdAt),
@@ -467,46 +466,46 @@ export const riskPredictionsTable = pgTable(
 );
 
 /** Laboratory result files. File contents are stored AES-256-GCM encrypted. */
-export const labResultsTable = pgTable(
+export const labResultsTable = mysqlTable(
   "caretrack_lab_results",
   {
-    id: serial("id").primaryKey(),
-    patientId: integer("patient_id")
+    id: int("id").autoincrement().primaryKey(),
+    patientId: int("patient_id")
       .notNull()
       .references(() => patientsTable.id, { onDelete: "cascade" }),
-    uploadedBy: integer("uploaded_by").references(() => usersTable.id, { onDelete: "set null" }),
+    uploadedBy: int("uploaded_by").references(() => usersTable.id, { onDelete: "set null" }),
     // "lab" for laboratory results, "prescription" for prescriptions uploaded by a doctor.
     category: text("category").notNull().default("lab"),
     title: text("title").notNull(),
     fileName: text("file_name").notNull(),
     mimeType: text("mime_type").notNull(),
-    sizeBytes: integer("size_bytes").notNull(),
+    sizeBytes: int("size_bytes").notNull(),
     encryptedData: text("encrypted_data").notNull(),
     notes: text("notes"),
     reviewComment: text("review_comment"),
-    reviewedBy: integer("reviewed_by").references(() => usersTable.id, { onDelete: "set null" }),
-    reviewedAt: timestamp("reviewed_at", { withTimezone: true }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    reviewedBy: int("reviewed_by").references(() => usersTable.id, { onDelete: "set null" }),
+    reviewedAt: datetime("reviewed_at"),
+    createdAt: datetime("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [index("caretrack_lab_results_patient_idx").on(table.patientId, table.createdAt)],
 );
 
 /** Follow-up check-ups between a patient and their doctor. */
-export const appointmentsTable = pgTable(
+export const appointmentsTable = mysqlTable(
   "caretrack_appointments",
   {
-    id: serial("id").primaryKey(),
-    patientId: integer("patient_id")
+    id: int("id").autoincrement().primaryKey(),
+    patientId: int("patient_id")
       .notNull()
       .references(() => patientsTable.id, { onDelete: "cascade" }),
-    providerId: integer("provider_id").references(() => usersTable.id, { onDelete: "set null" }),
-    scheduledAt: timestamp("scheduled_at", { withTimezone: true }).notNull(),
+    providerId: int("provider_id").references(() => usersTable.id, { onDelete: "set null" }),
+    scheduledAt: datetime("scheduled_at").notNull(),
     reason: text("reason").notNull(),
     status: text("status").notNull().default("scheduled"),
     notes: text("notes"),
-    reminderSentAt: timestamp("reminder_sent_at", { withTimezone: true }),
-    createdBy: integer("created_by").references(() => usersTable.id, { onDelete: "set null" }),
-    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    reminderSentAt: datetime("reminder_sent_at"),
+    createdBy: int("created_by").references(() => usersTable.id, { onDelete: "set null" }),
+    createdAt: datetime("created_at").notNull().default(sql`CURRENT_TIMESTAMP`),
   },
   (table) => [
     index("caretrack_appointments_patient_idx").on(table.patientId, table.scheduledAt),

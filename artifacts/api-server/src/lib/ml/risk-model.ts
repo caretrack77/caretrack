@@ -245,7 +245,7 @@ export async function trainAndPredict(trainedBy: number | null = null): Promise<
   }
 
   const forest = new RandomForest({ classes: 3, trees: 60, maxDepth: 6, minSamplesLeaf: 3, seed: 42 }).fit(samples);
-  const [run] = await db
+  const inserted = await db
     .insert(modelRunsTable)
     .values({
       algorithm: "Random Forest (CART, Gini impurity, bootstrap aggregation)",
@@ -261,7 +261,8 @@ export async function trainAndPredict(trainedBy: number | null = null): Promise<
       })).sort((a, b) => b.importance - a.importance),
       trainedBy,
     })
-    .returning();
+    ;
+  const [run] = await db.select().from(modelRunsTable).where(eq(modelRunsTable.id, Number(inserted[0].insertId))).limit(1);
 
   const stats = statsFor(samples);
   let predictions = 0;
@@ -332,7 +333,7 @@ export async function trainAndPredict(trainedBy: number | null = null): Promise<
 export async function latestPredictions(patientIds: number[]) {
   if (patientIds.length === 0) return [];
   const rows = await db
-    .selectDistinctOn([riskPredictionsTable.patientId], {
+    .select({
       prediction: riskPredictionsTable,
       name: patientsTable.name,
     })
@@ -340,7 +341,9 @@ export async function latestPredictions(patientIds: number[]) {
     .innerJoin(patientsTable, eq(patientsTable.id, riskPredictionsTable.patientId))
     .where(inArray(riskPredictionsTable.patientId, patientIds))
     .orderBy(riskPredictionsTable.patientId, desc(riskPredictionsTable.createdAt));
-  return rows;
+  const latest = new Map<number, (typeof rows)[number]>();
+  for (const row of rows) if (!latest.has(row.prediction.patientId)) latest.set(row.prediction.patientId, row);
+  return [...latest.values()];
 }
 
 export async function latestModelRun() {

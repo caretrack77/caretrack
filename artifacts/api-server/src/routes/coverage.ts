@@ -122,7 +122,7 @@ router.post("/coverage", requireRoles("admin", "provider"), async (req, res): Pr
     res.status(400).json({ error: "Both people must be active doctors or nurses." });
     return;
   }
-  const [coverage] = await db
+  const inserted = await db
     .insert(providerCoverageTable)
     .values({
       absentProviderId,
@@ -132,7 +132,8 @@ router.post("/coverage", requireRoles("admin", "provider"), async (req, res): Pr
       reason: parsed.data.reason?.trim() || null,
       createdBy: user.id,
     })
-    .returning();
+    ;
+  const [coverage] = await db.select().from(providerCoverageTable).where(eq(providerCoverageTable.id, Number(inserted[0].insertId))).limit(1);
   const [result] = await loadCoverage(eq(providerCoverageTable.id, coverage.id));
   const period = `${startDate}${endDate ? ` to ${endDate}` : " until further notice"}`;
   await db.insert(notificationsTable).values([

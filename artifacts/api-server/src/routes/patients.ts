@@ -125,7 +125,7 @@ router.post(
       return;
     }
     const user = currentUser(res)!;
-    const [patient] = await db
+    const inserted = await db
       .insert(patientsTable)
       .values({
         name: parsed.data.name.trim(),
@@ -137,7 +137,8 @@ router.post(
         allergies: parsed.data.allergies ?? [],
         notes: parsed.data.notes?.trim() || null,
       })
-      .returning();
+      ;
+    const [patient] = await db.select().from(patientsTable).where(eq(patientsTable.id, Number(inserted[0].insertId))).limit(1);
 
     let providerId: number | null = null;
     if (parsed.data.assignedProviderId) {
@@ -160,7 +161,7 @@ router.post(
       await db
         .insert(patientProviderAssignmentsTable)
         .values({ patientId: patient.id, providerId })
-        .onConflictDoNothing();
+        .onDuplicateKeyUpdate({ set: { patientId: patient.id } });
     }
 
     await writeAuditLog(user.id, "create", "patient", patient.id);
@@ -321,7 +322,7 @@ router.post(
       return;
     }
     const phone = parsed.data.phone?.trim() || patient.phone || null;
-    const [account] = await db
+    const inserted = await db
       .insert(usersTable)
       .values({
         name: patient.name,
@@ -332,7 +333,8 @@ router.post(
         // The patient chooses their own password at first sign-in.
         mustChangePassword: true,
       })
-      .returning({ id: usersTable.id, email: usersTable.email });
+      ;
+    const [account] = await db.select({ id: usersTable.id, email: usersTable.email }).from(usersTable).where(eq(usersTable.id, Number(inserted[0].insertId))).limit(1);
     await db
       .update(patientsTable)
       .set({ userId: account.id, email: patient.email ?? email, phone: patient.phone ?? phone })

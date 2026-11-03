@@ -35,10 +35,7 @@ async function markRead(userId: number, patientId: number): Promise<void> {
   await db
     .insert(messageReadsTable)
     .values({ userId, patientId, lastReadAt: new Date() })
-    .onConflictDoUpdate({
-      target: [messageReadsTable.userId, messageReadsTable.patientId],
-      set: { lastReadAt: new Date() },
-    });
+    .onDuplicateKeyUpdate({ set: { lastReadAt: new Date() } });
 }
 
 function serializeMessage(row: {
@@ -70,7 +67,7 @@ router.get("/messages/threads", async (_req, res): Promise<void> => {
       .from(patientsTable)
       .where(inArray(patientsTable.id, patientIds)),
     db
-      .selectDistinctOn([messagesTable.patientId], {
+      .select({
         patientId: messagesTable.patientId,
         body: messagesTable.body,
         createdAt: messagesTable.createdAt,
@@ -81,9 +78,11 @@ router.get("/messages/threads", async (_req, res): Promise<void> => {
       .where(inArray(messagesTable.patientId, patientIds))
       .orderBy(messagesTable.patientId, desc(messagesTable.createdAt)),
   ]);
+  const latestByPatient = new Map<number, (typeof latest)[number]>();
+  for (const row of latest) if (!latestByPatient.has(row.patientId)) latestByPatient.set(row.patientId, row);
   // Unread = messages from someone else, newer than this user's last read time.
   const unread = await db
-    .select({ patientId: messagesTable.patientId, total: sql<number>`count(*)::int` })
+    .select({ patientId: messagesTable.patientId, total: sql<number>`count(*)` })
     .from(messagesTable)
     .leftJoin(
       messageReadsTable,
@@ -102,7 +101,7 @@ router.get("/messages/threads", async (_req, res): Promise<void> => {
     .groupBy(messagesTable.patientId);
   const threads = patients
     .map((patient) => {
-      const last = latest.find((row) => row.patientId === patient.id);
+      const last = latestByPatient.get(patient.id);
       return {
         patientId: patient.id,
         patientName: patient.name,
@@ -159,10 +158,11 @@ router.post("/patients/:id/messages", async (req, res): Promise<void> => {
     res.status(403).json({ error: "Caregiver accounts can read messages but not send them." });
     return;
   }
-  const [message] = await db
+  const inserted = await db
     .insert(messagesTable)
     .values({ patientId, senderId: user.id, body: encryptText(body.slice(0, 2000)) })
-    .returning();
+    ;
+  const [message] = await db.select().from(messagesTable).where(eq(messagesTable.id, Number(inserted[0].insertId))).limit(1);
   await markRead(user.id, patientId);
 
   // Notify the other side: the care team when a patient writes, otherwise the patient and caregivers.

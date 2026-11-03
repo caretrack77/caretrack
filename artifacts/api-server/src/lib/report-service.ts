@@ -93,7 +93,7 @@ export async function createReport(
           .from(patientsTable)
           .where(eq(patientsTable.id, patientId))
           .limit(1);
-  const [report] = await db
+  const inserted = await db
     .insert(reportsTable)
     .values({
       patientId,
@@ -109,7 +109,8 @@ export async function createReport(
         source: suggestion.source,
       },
     })
-    .returning();
+    ;
+  const [report] = await db.select().from(reportsTable).where(eq(reportsTable.id, Number(inserted[0].insertId))).limit(1);
   await db.insert(notificationsTable).values({
     userId: user.id,
     patientId,
