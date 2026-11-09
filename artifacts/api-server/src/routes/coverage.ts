@@ -104,6 +104,10 @@ router.post("/coverage", requireRoles("admin", "provider"), async (req, res): Pr
     res.status(400).json({ error: "Dates must be in YYYY-MM-DD format." });
     return;
   }
+  if (startDate < manilaDate()) {
+    res.status(400).json({ error: "Coverage cannot start in the past." });
+    return;
+  }
   if (endDate && endDate < startDate) {
     res.status(400).json({ error: "The end date must be on or after the start date." });
     return;
@@ -119,10 +123,10 @@ router.post("/coverage", requireRoles("admin", "provider"), async (req, res): Pr
       ),
     );
   if (providers.length !== 2) {
-    res.status(400).json({ error: "Both people must be active doctors or nurses." });
+    res.status(400).json({ error: "Both people must be active doctors." });
     return;
   }
-  const inserted = await db
+  const [coverage] = await db
     .insert(providerCoverageTable)
     .values({
       absentProviderId,
@@ -132,8 +136,7 @@ router.post("/coverage", requireRoles("admin", "provider"), async (req, res): Pr
       reason: parsed.data.reason?.trim() || null,
       createdBy: user.id,
     })
-    ;
-  const [coverage] = await db.select().from(providerCoverageTable).where(eq(providerCoverageTable.id, Number(inserted[0].insertId))).limit(1);
+    .returning();
   const [result] = await loadCoverage(eq(providerCoverageTable.id, coverage.id));
   const period = `${startDate}${endDate ? ` to ${endDate}` : " until further notice"}`;
   await db.insert(notificationsTable).values([

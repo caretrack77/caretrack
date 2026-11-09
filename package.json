@@ -6,7 +6,8 @@
   "private": true,
   "scripts": {
     "dev": "concurrently -n api,web -c cyan,magenta \"pnpm --filter @workspace/api-server run dev\" \"pnpm --filter @workspace/caretrack run dev\"",
-    "build": "pnpm run typecheck && pnpm -r --if-present run build",
+    "test": "vitest run",
+    "build": "pnpm run typecheck && pnpm run test && pnpm -r --if-present run build",
     "start": "pnpm --filter @workspace/api-server run start",
     "db:push": "pnpm --filter @workspace/db run push",
     "db:seed": "pnpm --filter @workspace/api-server run seed",
@@ -16,6 +17,7 @@
   "devDependencies": {
     "concurrently": "^9.2.1",
     "prettier": "^3.9.10",
-    "typescript": "~5.9.3"
+    "typescript": "~5.9.3",
+    "vitest": "^3.2.7"
   }
 }

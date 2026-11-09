@@ -1,5 +1,5 @@
 import { createHash, randomBytes, randomInt, timingSafeEqual } from "node:crypto";
-import { and, eq, gt, isNull, ne } from "drizzle-orm";
+import { and, desc, eq, gt, isNull, ne } from "drizzle-orm";
 import bcrypt from "bcryptjs";
 import {
   type NextFunction,
@@ -12,6 +12,7 @@ import {
   db,
   otpChallengesTable,
   patientsTable,
+  privacyConsentsTable,
   sessionsTable,
   usersTable,
 } from "@workspace/db";
@@ -29,6 +30,14 @@ import {
 import { writeAuditLog } from "./audit";
 import { logger } from "./logger";
 import { sendEmail, sendSms, undeliverableEmail } from "./otp-delivery";
+import {
+  loginRateLimit,
+  otpRequestRateLimit,
+  otpVerifyRateLimit,
+  passwordRateLimit,
+} from "./rate-limit";
+import { otpOfflineFallbackAllowed, PRIVACY_NOTICE_VERSION } from "./security-config";
+export { PRIVACY_NOTICE_VERSION } from "./security-config";
 
 const SESSION_COOKIE = "caretrack_session";
 const SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
@@ -36,7 +45,8 @@ const SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 export type CurrentUser = Pick<
   typeof usersTable.$inferSelect,
   "id" | "name" | "email" | "role" | "active" | "mustChangePassword"
->;
+> & { privacyConsentAccepted?: boolean };
+
 
 function getSessionSecret(): string {
   const secret = process.env.SESSION_SECRET;
@@ -53,7 +63,17 @@ function hashToken(token: string): string {
     .digest("hex");
 }
 
-function publicUser(user: CurrentUser): CurrentUser {
+async function privacyConsentAccepted(userId: number): Promise<boolean> {
+  const [consent] = await db
+    .select({ version: privacyConsentsTable.version })
+    .from(privacyConsentsTable)
+    .where(eq(privacyConsentsTable.userId, userId))
+    .orderBy(desc(privacyConsentsTable.acceptedAt))
+    .limit(1);
+  return consent?.version === PRIVACY_NOTICE_VERSION;
+}
+
+async function publicUser(user: Omit<CurrentUser, "privacyConsentAccepted"> & { privacyConsentAccepted?: boolean }): Promise<CurrentUser> {
   return {
     id: user.id,
     name: user.name,
@@ -61,7 +81,19 @@ function publicUser(user: CurrentUser): CurrentUser {
     role: user.role,
     active: user.active,
     mustChangePassword: user.mustChangePassword,
+    privacyConsentAccepted: await privacyConsentAccepted(user.id),
   };
+}
+
+export function isMobileClient(req: Request): boolean {
+  const clientHeader = req.header("x-caretrack-client")?.toLowerCase();
+  if (clientHeader === "android-app" || clientHeader === "mobile-app") return true;
+  const ua = req.header("user-agent");
+  return Boolean(ua && /(Android|iPhone|iPad|iPod|Mobile)/i.test(ua));
+}
+
+export function rejectsPatientWebDevice(req: Request, role: string): boolean {
+  return (role === "patient" || role === "caregiver") && !isMobileClient(req);
 }
 
 export function currentUser(res: Response): CurrentUser | undefined {
@@ -76,6 +108,17 @@ export function requireUser(
   const user = currentUser(res);
   if (!user) {
     res.status(401).json({ error: "Sign in to continue." });
+    return;
+  }
+  if (!user.privacyConsentAccepted && !req.originalUrl.startsWith("/api/auth/")) {
+    res.status(403).json({ error: "Please review and accept the privacy notice.", code: "PRIVACY_CONSENT_REQUIRED" });
+    return;
+  }
+  if (rejectsPatientWebDevice(req, user.role)) {
+    res.status(403).json({
+      error: "Patient and caregiver accounts must sign in from the CareTrack mobile app.",
+      code: "MOBILE_APP_REQUIRED",
+    });
     return;
   }
   // Accounts with a temporary password can only reach the auth endpoints until they change it.
@@ -149,12 +192,12 @@ export async function authenticate(
     .limit(1);
 
   if (!record) {
-    res.clearCookie(SESSION_COOKIE, { path: "/api", sameSite: "lax" });
+    res.clearCookie(SESSION_COOKIE, { path: "/api", sameSite: "lax", secure: process.env.NODE_ENV === "production" });
     next();
     return;
   }
 
-  res.locals.currentUser = publicUser(record);
+  res.locals.currentUser = await publicUser(record);
   next();
 }
 
@@ -162,7 +205,7 @@ function cookieOptions(req: Request) {
   return {
     httpOnly: true,
     // HTTPS deployments get secure cookies; plain-HTTP localhost still works.
-    secure: req.secure,
+    secure: process.env.NODE_ENV === "production" ? true : req.secure,
     sameSite: "lax" as const,
     path: "/api",
     maxAge: SESSION_LIFETIME_MS,
@@ -213,7 +256,7 @@ async function startSession(req: Request, res: Response, userId: number): Promis
 
 const router: IRouter = Router();
 
-router.post("/auth/login", async (req, res): Promise<void> => {
+router.post("/auth/login", loginRateLimit, async (req, res): Promise<void> => {
   const parsed = LoginBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -232,6 +275,16 @@ router.post("/auth/login", async (req, res): Promise<void> => {
   if (!user || !matches) {
     await writeAuditLog(user?.id ?? null, "login_failed", "user", user?.id ?? null, { email });
     res.status(401).json({ error: "Email or password is incorrect." });
+    return;
+  }
+  if (rejectsPatientWebDevice(req, user.role)) {
+    await writeAuditLog(user.id, "login_mobile_required", "user", user.id, {
+      userAgent: req.header("user-agent")?.slice(0, 200) ?? "",
+    });
+    res.status(403).json({
+      error: "Patient and caregiver accounts can only sign in from the CareTrack mobile app.",
+      code: "MOBILE_APP_REQUIRED",
+    });
     return;
   }
 
@@ -267,7 +320,7 @@ router.post("/auth/login", async (req, res): Promise<void> => {
       channels: [],
       maskedEmail: null,
       maskedPhone: null,
-      user: publicUser(user),
+      user: await publicUser(user),
     }),
   );
 });
@@ -287,7 +340,7 @@ async function loadChallenge(challengeId: string) {
   return challenge;
 }
 
-router.post("/auth/otp/send", async (req, res): Promise<void> => {
+router.post("/auth/otp/send", otpRequestRateLimit, async (req, res): Promise<void> => {
   const parsed = SendLoginOtpBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: parsed.error.message });
@@ -305,6 +358,13 @@ router.post("/auth/otp/send", async (req, res): Promise<void> => {
   const [user] = await db.select().from(usersTable).where(eq(usersTable.id, challenge.userId)).limit(1);
   if (!user?.active) {
     res.status(401).json({ error: "This account is not active." });
+    return;
+  }
+  if (rejectsPatientWebDevice(req, user.role)) {
+    res.status(403).json({
+      error: "Patient and caregiver accounts can only sign in from the CareTrack mobile app.",
+      code: "MOBILE_APP_REQUIRED",
+    });
     return;
   }
   const channel = parsed.data.channel;
@@ -333,7 +393,7 @@ router.post("/auth/otp/send", async (req, res): Promise<void> => {
       : await sendEmail(user.email, "Your CareTrack login code", text);
 
   // Offline mode: with no internet or no provider configured, show the code on screen.
-  const showOffline = !delivered && process.env.OTP_OFFLINE_FALLBACK !== "false";
+  const showOffline = !delivered && otpOfflineFallbackAllowed();
   if (!delivered) {
     logger.info({ userId: user.id, channel }, `Offline OTP for ${user.email}: ${code}`);
   }
@@ -359,7 +419,7 @@ router.post("/auth/otp/send", async (req, res): Promise<void> => {
   );
 });
 
-router.post("/auth/otp/verify", async (req, res): Promise<void> => {
+router.post("/auth/otp/verify", otpVerifyRateLimit, async (req, res): Promise<void> => {
   const parsed = VerifyLoginOtpBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Enter the 6-digit code." });
@@ -406,10 +466,10 @@ router.post("/auth/otp/verify", async (req, res): Promise<void> => {
     .where(eq(otpChallengesTable.id, challenge.id));
   await startSession(req, res, user.id);
   await writeAuditLog(user.id, "login", "user", user.id, { method: `otp_${challenge.channel}` });
-  res.json(VerifyLoginOtpResponse.parse(publicUser(user)));
+  res.json(VerifyLoginOtpResponse.parse(await publicUser(user)));
 });
 
-router.post("/auth/change-password", authenticate, requireUser, async (req, res): Promise<void> => {
+router.post("/auth/change-password", passwordRateLimit, authenticate, requireUser, async (req, res): Promise<void> => {
   const parsed = ChangePasswordBody.safeParse(req.body);
   if (!parsed.success) {
     res.status(400).json({ error: "Enter your current password and a new password of at least 8 characters." });
@@ -430,19 +490,29 @@ router.post("/auth/change-password", authenticate, requireUser, async (req, res)
     res.status(400).json({ error: "Choose a password different from your current one." });
     return;
   }
-  await db
+  const [updated] = await db
     .update(usersTable)
     .set({ passwordHash: await bcrypt.hash(parsed.data.newPassword.trim(), 12), mustChangePassword: false })
     .where(eq(usersTable.id, user.id))
-    ;
-  const [updated] = await db.select().from(usersTable).where(eq(usersTable.id, user.id)).limit(1);
+    .returning();
   // Sign out every other device; keep this session.
   const token = req.cookies?.[SESSION_COOKIE];
   await db
     .delete(sessionsTable)
     .where(and(eq(sessionsTable.userId, user.id), ne(sessionsTable.tokenHash, hashToken(String(token)))));
   await writeAuditLog(user.id, "password_changed", "user", user.id);
-  res.json(ChangePasswordResponse.parse(publicUser(updated)));
+  res.json(ChangePasswordResponse.parse(await publicUser(updated)));
+});
+
+router.post("/auth/privacy-consent", authenticate, requireUser, async (req, res): Promise<void> => {
+  const user = currentUser(res)!;
+  if (req.body?.version !== PRIVACY_NOTICE_VERSION) {
+    res.status(400).json({ error: "Privacy notice version is no longer current. Please retry.", code: "PRIVACY_VERSION_MISMATCH" });
+    return;
+  }
+  await db.insert(privacyConsentsTable).values({ userId: user.id, version: PRIVACY_NOTICE_VERSION });
+  await writeAuditLog(user.id, "privacy_consent_accepted", "user", user.id, { version: PRIVACY_NOTICE_VERSION });
+  res.json({ accepted: true, version: PRIVACY_NOTICE_VERSION });
 });
 
 router.get("/auth/me", authenticate, requireUser, (_req, res): void => {
@@ -452,8 +522,10 @@ router.get("/auth/me", authenticate, requireUser, (_req, res): void => {
 router.post("/auth/logout", async (req, res): Promise<void> => {
   const token = req.cookies?.[SESSION_COOKIE];
   if (typeof token === "string" && token.length >= 32) {
-    const [session] = await db.select({ userId: sessionsTable.userId }).from(sessionsTable).where(eq(sessionsTable.tokenHash, hashToken(token))).limit(1);
-    await db.delete(sessionsTable).where(eq(sessionsTable.tokenHash, hashToken(token)));
+    const [session] = await db
+      .delete(sessionsTable)
+      .where(eq(sessionsTable.tokenHash, hashToken(token)))
+      .returning({ userId: sessionsTable.userId });
     if (session) {
       await writeAuditLog(session.userId, "logout", "user", session.userId);
     }

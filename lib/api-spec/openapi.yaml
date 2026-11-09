@@ -46,6 +46,58 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /patients/{patientId}/health-metrics:
+    parameters:
+      - { name: patientId, in: path, required: true, schema: { type: integer } }
+    get:
+      operationId: listHealthMetrics
+      tags: [health]
+      responses:
+        "200":
+          description: Health metrics, newest first
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/HealthMetric" } }
+    post:
+      operationId: createHealthMetric
+      tags: [health]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HealthMetricInput" }
+      responses:
+        "201":
+          description: Recorded health metric
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthMetric" }
+  /patients/{patientId}/health-logs:
+    parameters:
+      - { name: patientId, in: path, required: true, schema: { type: integer } }
+    get:
+      operationId: listHealthLogs
+      tags: [health]
+      responses:
+        "200":
+          description: Health and symptom logs
+          content:
+            application/json:
+              schema: { type: array, items: { $ref: "#/components/schemas/HealthLog" } }
+    post:
+      operationId: createHealthLog
+      tags: [health]
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/HealthLogInput" }
+      responses:
+        "201":
+          description: Recorded health observation
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/HealthLog" }
   /auth/login:
     post:
       operationId: login
@@ -136,6 +188,23 @@ paths:
                 $ref: "#/components/schemas/AuthUser"
         "401":
           description: Not signed in
+  /auth/privacy-consent:
+    post:
+      operationId: acceptPrivacyConsent
+      tags: [auth]
+      summary: Accept the current CareTrack privacy notice
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/PrivacyConsentInput"
+      responses:
+        "200":
+          description: Consent accepted
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PrivacyConsentResult" }
   /auth/logout:
     post:
       operationId: logout
@@ -523,7 +592,7 @@ paths:
     get:
       operationId: listProviders
       tags: [users]
-      summary: Active doctors and nurses, for assignment and coverage pickers
+      summary: Active doctors, for assignment and coverage pickers
       responses:
         "200":
           description: Providers
@@ -890,6 +959,20 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/Notification" }
+  /events:
+    get:
+      operationId: events
+      tags: [notifications, messages]
+      summary: Subscribe to authenticated message and notification updates
+      description: Server-Sent Events stream. The existing session cookie authenticates and authorizes the stream.
+      responses:
+        "200":
+          description: Server-Sent Events stream
+          content:
+            text/event-stream:
+              schema: { type: string }
+        "401":
+          description: Authentication required
   /notifications/{id}/read:
     post:
       operationId: markNotificationRead
@@ -1039,6 +1122,100 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/AuditLog" }
+  /patients/{patientId}/medical-history:
+    get:
+      operationId: listMedicalHistory
+      tags: [patients]
+      parameters:
+        - { name: patientId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: Medical history, content: { application/json: { schema: { type: array, items: { type: object, additionalProperties: true } } } } }
+    post:
+      operationId: createMedicalHistory
+      tags: [patients]
+      parameters:
+        - { name: patientId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [occurredOn, title]
+              properties:
+                occurredOn: { type: string, format: date }
+                title: { type: string }
+                notes: { type: string }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /patients/{patientId}/consultations:
+    get:
+      operationId: listConsultations
+      tags: [patients]
+      parameters:
+        - { name: patientId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: Consultations, content: { application/json: { schema: { type: array, items: { type: object, additionalProperties: true } } } } }
+    post:
+      operationId: createConsultation
+      tags: [patients]
+      parameters:
+        - { name: patientId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [consultationDate, complaint]
+              properties:
+                consultationDate: { type: string, format: date }
+                complaint: { type: string }
+                assessment: { type: string }
+                notes: { type: string }
+                followUp: { type: string }
+                appointmentId: { type: integer }
+      responses:
+        "201": { description: Created, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /patients/{patientId}/prescriptions:
+    get:
+      operationId: listPatientPrescriptions
+      tags: [patients]
+      parameters:
+        - { name: patientId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: Prescriptions, content: { application/json: { schema: { type: array, items: { type: object, additionalProperties: true } } } } }
+  /consultations/{consultationId}/prescriptions:
+    post:
+      operationId: createPrescription
+      tags: [patients]
+      parameters:
+        - { name: consultationId, in: path, required: true, schema: { type: integer } }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [medicationName, dosage, frequency, durationDays, scheduleTimes]
+              properties:
+                medicationName: { type: string }
+                dosage: { type: string }
+                frequency: { type: string }
+                durationDays: { type: integer }
+                instructions: { type: string }
+                scheduleTimes: { type: array, items: { type: string } }
+                form: { type: string }
+      responses:
+        "201": { description: Prescription and medication schedule created, content: { application/json: { schema: { type: object, additionalProperties: true } } } }
+  /patients/{patientId}/record-history:
+    get:
+      operationId: listPatientRecordHistory
+      tags: [patients]
+      parameters:
+        - { name: patientId, in: path, required: true, schema: { type: integer } }
+      responses:
+        "200": { description: Clinical record history, content: { application/json: { schema: { type: array, items: { type: object, additionalProperties: true } } } } }
 components:
   schemas:
     HealthStatus:
@@ -1048,6 +1225,51 @@ components:
           type: string
       required:
         - status
+    HealthMetricInput:
+      type: object
+      required: [metricType, value, unit]
+      properties:
+        metricType: { type: string, enum: [blood_pressure, blood_sugar, weight, heart_rate, temperature] }
+        value: { type: number }
+        secondaryValue: { type: number }
+        unit: { type: string }
+        recordedAt: { type: string, format: date-time }
+        note: { type: string }
+    HealthMetric:
+      type: object
+      required: [id, patientId, metricType, value, unit, recordedAt, outOfRange]
+      properties:
+        id: { type: integer }
+        patientId: { type: integer }
+        metricType: { type: string }
+        value: { type: number }
+        secondaryValue: { type: number, nullable: true }
+        unit: { type: string }
+        recordedAt: { type: string, format: date-time }
+        recordedBy: { type: integer, nullable: true }
+        note: { type: string, nullable: true }
+        outOfRange: { type: boolean }
+        active: { type: boolean }
+        createdAt: { type: string, format: date-time }
+    HealthLogInput:
+      type: object
+      required: [symptoms]
+      properties:
+        symptoms: { type: array, items: { type: string } }
+        notes: { type: string }
+        recordedAt: { type: string, format: date-time }
+    HealthLog:
+      type: object
+      required: [id, patientId, recordedAt, symptoms]
+      properties:
+        id: { type: integer }
+        patientId: { type: integer }
+        recordedAt: { type: string, format: date-time }
+        symptoms: { type: array, items: { type: string } }
+        notes: { type: string, nullable: true }
+        recordedBy: { type: integer, nullable: true }
+        active: { type: boolean }
+        createdAt: { type: string, format: date-time }
     LoginInput:
       type: object
       properties:
@@ -1149,9 +1371,10 @@ components:
         probLow: { type: number }
         probModerate: { type: number }
         probHigh: { type: number }
+        confidence: { type: number, description: "Maximum predicted class probability." }
         factors: { type: array, items: { $ref: "#/components/schemas/RiskFactor" } }
         createdAt: { type: string }
-      required: [patientId, patientName, riskLevel, riskScore, probLow, probModerate, probHigh, factors, createdAt]
+      required: [patientId, patientName, riskLevel, riskScore, probLow, probModerate, probHigh, confidence, factors, createdAt]
     RiskHistoryPoint:
       type: object
       properties:
@@ -1377,7 +1600,19 @@ components:
         role: { type: string, enum: [admin, provider, patient, caregiver] }
         active: { type: boolean }
         mustChangePassword: { type: boolean }
-      required: [id, name, email, role, active, mustChangePassword]
+        privacyConsentAccepted: { type: boolean }
+      required: [id, name, email, role, active, mustChangePassword, privacyConsentAccepted]
+    PrivacyConsentInput:
+      type: object
+      properties:
+        version: { type: string, minLength: 1 }
+      required: [version]
+    PrivacyConsentResult:
+      type: object
+      properties:
+        accepted: { type: boolean }
+        version: { type: string }
+      required: [accepted, version]
     User:
       allOf:
         - $ref: "#/components/schemas/AuthUser"
@@ -1672,4 +1907,3 @@ components:
         details: { type: object, additionalProperties: true }
         createdAt: { type: string, format: date-time }
       required: [id, userId, userName, action, entityType, entityId, details, createdAt]
-

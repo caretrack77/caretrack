@@ -1,8 +1,17 @@
 import PDFDocument from "pdfkit";
-import { asc, eq } from "drizzle-orm";
-import { db, medicationsTable, patientsTable, reportsTable } from "@workspace/db";
+import { and, asc, desc, eq, gte, lt } from "drizzle-orm";
+import {
+  db,
+  healthMetricsTable,
+  medicationsTable,
+  patientsTable,
+  reportsTable,
+  riskPredictionsTable,
+} from "@workspace/db";
 import type { CurrentUser } from "./auth";
 import { reportDoseRows } from "./report-service";
+import { recommendationsFor, type RiskFactor } from "./ml/risk-model";
+import { csvCell } from "./csv-protection";
 
 type ReportRecord = typeof reportsTable.$inferSelect;
 
@@ -57,11 +66,57 @@ function shortDate(value: string | Date): string {
   return text.slice(0, 10);
 }
 
-function csvCell(value: unknown): string {
-  const text = value === null || value === undefined ? "" : String(value);
-  // Neutralise spreadsheet formula injection and escape quotes.
-  const safe = /^[=+\-@]/.test(text) ? `'${text}` : text;
-  return /[",\n]/.test(safe) ? `"${safe.replace(/"/g, '""')}"` : safe;
+export 
+
+type ReportHealthMetric = typeof healthMetricsTable.$inferSelect;
+type ReportRiskPrediction = typeof riskPredictionsTable.$inferSelect;
+
+async function reportHealthAndAi(
+  report: ReportRecord,
+  patientId: number | null,
+) {
+  if (patientId === null) {
+    return { metrics: [] as ReportHealthMetric[], prediction: null as ReportRiskPrediction | null };
+  }
+  const startAt = new Date(`${report.rangeStart}T00:00:00+08:00`);
+  const endAt = new Date(`${report.rangeEnd}T00:00:00+08:00`);
+  endAt.setDate(endAt.getDate() + 1);
+  const [metrics, predictionRows] = await Promise.all([
+    db.select().from(healthMetricsTable).where(and(
+      eq(healthMetricsTable.patientId, patientId),
+      eq(healthMetricsTable.active, true),
+      gte(healthMetricsTable.recordedAt, startAt),
+      lt(healthMetricsTable.recordedAt, endAt),
+    )).orderBy(asc(healthMetricsTable.recordedAt)),
+    db.select().from(riskPredictionsTable).where(
+      eq(riskPredictionsTable.patientId, patientId),
+    ).orderBy(desc(riskPredictionsTable.createdAt)).limit(1),
+  ]);
+  return { metrics, prediction: predictionRows[0] ?? null };
+}
+
+const metricLabel = (type: string) =>
+  ({ blood_pressure: "Blood pressure", blood_sugar: "Blood sugar", heart_rate: "Heart rate", weight: "Weight", temperature: "Temperature" }[type] ?? type.replace(/_/g, " "));
+
+function metricValue(metric: ReportHealthMetric) {
+  return metric.secondaryValue === null
+    ? `${metric.value} ${metric.unit}`
+    : `${metric.value}/${metric.secondaryValue} ${metric.unit}`;
+}
+
+function healthSummaries(metrics: ReportHealthMetric[]) {
+  const groups = new Map<string, ReportHealthMetric[]>();
+  for (const metric of metrics) groups.set(metric.metricType, [...(groups.get(metric.metricType) ?? []), metric]);
+  return [...groups.entries()].map(([type, readings]) => {
+    const latest = readings[readings.length - 1];
+    const average = readings.reduce((total, item) => total + item.value, 0) / readings.length;
+    return {
+      type,
+      latest: metricValue(latest),
+      average: `${average.toFixed(1)}${latest.unit ? ` ${latest.unit}` : ""}`,
+      outOfRangeCount: readings.filter((item) => item.outOfRange).length,
+    };
+  });
 }
 
 export async function buildReportCsv(
@@ -91,7 +146,30 @@ export async function buildReportCsv(
       .map(csvCell)
       .join(","),
   );
-  return [header.join(","), ...lines].join("\n") + "\n";
+  const { metrics, prediction } = await reportHealthAndAi(report, report.patientId);
+  const summaries = healthSummaries(metrics);
+  const factors = prediction?.factors as RiskFactor[] | undefined;
+  const confidence = prediction
+    ? Math.max(prediction.probLow, prediction.probModerate, prediction.probHigh)
+    : null;
+  const { care } = recommendationsFor(prediction?.riskLevel ?? "low", factors ?? []);
+  const disclaimer = "AI suggestions support, not replace, clinical judgment. Predictions are decision support and not a diagnosis.";
+  const sections = [
+    [header.map(csvCell).join(","), ...lines].join("\n"),
+    ["", "HEALTH METRIC SUMMARY", "metric", "latest", "average", "out_of_range_count"].map(csvCell).join(","),
+    ...summaries.map((item) => [
+      "", "", metricLabel(item.type), item.latest, item.average, item.outOfRangeCount,
+    ].map(csvCell).join(",")),
+    ["", "OUT OF RANGE READINGS", "metric", "value", "recorded_at", "note"].map(csvCell).join(","),
+    ...metrics.filter((item) => item.outOfRange).map((item) => [
+      "", "", metricLabel(item.metricType), metricValue(item), item.recordedAt.toISOString(), item.note ?? "",
+    ].map(csvCell).join(",")),
+    ["", "AI RISK", "risk_level", "confidence", "top_factors", "recommendations", "ai_disclaimer"].map(csvCell).join(","),
+    ["", "", prediction?.riskLevel ?? "", confidence === null ? "" : `${(confidence * 100).toFixed(1)}%`,
+      (factors ?? []).slice(0, 5).map((factor) => factor.text).join("; "),
+      care.join("; "), disclaimer].map(csvCell).join(","),
+  ];
+  return sections.join("\n") + "\n";
 }
 
 export async function buildReportPdf(
@@ -120,6 +198,12 @@ export async function buildReportPdf(
     .filter((row) => row.dose.status === "missed")
     .slice(-10)
     .reverse();
+  const { metrics, prediction } = await reportHealthAndAi(report, report.patientId);
+  const factors = prediction?.factors as RiskFactor[] | undefined;
+  const confidence = prediction
+    ? Math.max(prediction.probLow, prediction.probModerate, prediction.probHigh)
+    : null;
+  const riskRecommendations = recommendationsFor(prediction?.riskLevel ?? "low", factors ?? []).care;
 
   const doc = new PDFDocument({ size: "A4", margin: 48 });
   const chunks: Buffer[] = [];
@@ -277,6 +361,55 @@ export async function buildReportPdf(
     }
   }
 
+  heading("Health metric summary");
+  const summaries = healthSummaries(metrics);
+  if (summaries.length === 0) {
+    doc.text("No health readings recorded during this reporting period.");
+  } else {
+    for (const item of summaries) {
+      ensureSpace(20);
+      doc.font("Helvetica-Bold").fontSize(10).fillColor(COLORS.ink).text(metricLabel(item.type));
+      doc.font("Helvetica").fontSize(9).fillColor(COLORS.muted).text(
+        `Latest: ${item.latest}  |  Average: ${item.average}  |  Out of range: ${item.outOfRangeCount}`,
+      );
+    }
+  }
+
+  heading("Out-of-range readings");
+  const outOfRangeMetrics = metrics.filter((item) => item.outOfRange);
+  if (outOfRangeMetrics.length === 0) {
+    doc.text("No out-of-range readings recorded during this reporting period.");
+  } else {
+    for (const item of outOfRangeMetrics) {
+      ensureSpace(18);
+      doc.font("Helvetica").fontSize(9).fillColor(COLORS.ink).text(
+        `${shortDate(item.recordedAt)}  |  ${metricLabel(item.metricType)}: ${metricValue(item)}${item.note ? `  |  ${item.note}` : ""}`,
+      );
+    }
+  }
+
+  heading("AI risk assessment");
+  if (prediction) {
+    keyValue("Risk level", prediction.riskLevel);
+    keyValue("Confidence", `${(confidence! * 100).toFixed(1)}%`);
+    doc.font("Helvetica-Bold").fontSize(9).fillColor(COLORS.muted).text("Top risk factors");
+    const topFactors = (factors ?? []).slice(0, 5);
+    if (topFactors.length === 0) doc.font("Helvetica").fontSize(9).fillColor(COLORS.ink).text("No contributing factors recorded.");
+    for (const factor of topFactors) {
+      ensureSpace(18);
+      doc.font("Helvetica").fontSize(9).fillColor(COLORS.ink).text(`-  ${factor.text}`);
+    }
+    if (riskRecommendations.length > 0) {
+      doc.font("Helvetica-Bold").fontSize(9).fillColor(COLORS.muted).text("Recommendations");
+      for (const recommendation of riskRecommendations) {
+        ensureSpace(18);
+        doc.font("Helvetica").fontSize(9).fillColor(COLORS.ink).text(`-  ${recommendation}`);
+      }
+    }
+  } else {
+    doc.text("No AI risk prediction is available for this patient.");
+  }
+
   heading(data.source === "claude" ? "AI narrative summary" : "Narrative summary");
   doc.font("Helvetica").fontSize(10).fillColor(COLORS.ink).text(report.summary, { lineGap: 2 });
   if ((data.recommendations ?? []).length > 0) {
@@ -290,7 +423,7 @@ export async function buildReportPdf(
   doc.moveDown(1.2);
   ensureSpace(40);
   doc.font("Helvetica-Oblique").fontSize(8.5).fillColor(COLORS.muted).text(
-    `Generated by CareTrack${data.source === "claude" ? " with Claude AI assistance" : " using rule-based analysis"}. AI suggestions support, not replace, clinical judgment.`,
+    `Generated by CareTrack${data.source === "claude" ? " with Claude AI assistance" : " using rule-based analysis"}. AI disclaimer: AI suggestions support, not replace, clinical judgment. Predictions are decision support and not a diagnosis.`,
     left,
     doc.y,
     { width },

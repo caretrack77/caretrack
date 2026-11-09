@@ -1,0 +1,12 @@
+{
+  "name": "CareTrack",
+  "short_name": "CareTrack",
+  "description": "CareTrack medication and health care for patients and caregivers.",
+  "start_url": "/",
+  "scope": "/",
+  "display": "standalone",
+  "background_color": "#f7fbfb",
+  "theme_color": "#17647a",
+  "orientation": "portrait-primary",
+  "icons": []
+}

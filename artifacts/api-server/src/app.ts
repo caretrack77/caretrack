@@ -9,6 +9,7 @@ import express, {
 import cors from "cors";
 import cookieParser from "cookie-parser";
 import pinoHttp from "pino-http";
+import helmet from "helmet";
 import router from "./routes";
 import { logger } from "./lib/logger";
 
@@ -17,6 +18,22 @@ const app: Express = express();
 // Behind a reverse proxy (Render, Railway, Nginx...) this lets secure cookies work.
 app.set("trust proxy", 1);
 app.disable("x-powered-by");
+app.use(helmet({
+  contentSecurityPolicy: {
+    directives: {
+      defaultSrc: ["'self'"],
+      baseUri: ["'self'"],
+      objectSrc: ["'none'"],
+      scriptSrc: ["'self'"],
+      styleSrc: ["'self'", "'unsafe-inline'"],
+      imgSrc: ["'self'", "data:", "blob:"],
+      connectSrc: ["'self'", "https:", "wss:"],
+      fontSrc: ["'self'", "data:"],
+      workerSrc: ["'self'", "blob:"],
+      manifestSrc: ["'self'"],
+    },
+  },
+}));
 
 app.use(
   pinoHttp({

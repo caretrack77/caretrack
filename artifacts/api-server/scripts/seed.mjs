@@ -1,47 +1,18 @@
 import bcrypt from "bcryptjs";
-import mysql from "mysql2/promise";
+import pg from "pg";
 
+const { Pool } = pg;
 if (!process.env.DATABASE_URL) {
   throw new Error("DATABASE_URL is required to seed CareTrack.");
 }
 
-const pool = mysql.createPool(process.env.DATABASE_URL);
-const connection = await pool.getConnection();
-
-function mysqlQuery(sql, params = []) {
-  let statement = sql
-    .replace(/,\s*read\)/gi, ", `read`)")
-    .replace(/report_data->>'seeded'/g, "JSON_UNQUOTE(JSON_EXTRACT(report_data, '$.seeded'))")
-    .replace(/ON CONFLICT\s*\([^)]*\)\s*DO NOTHING/gi, "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)")
-    .replace(/ON CONFLICT\s+DO NOTHING/gi, "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id)")
-    .replace(/ON CONFLICT\s*\([^)]*\)\s*DO UPDATE SET/gi, "ON DUPLICATE KEY UPDATE id = LAST_INSERT_ID(id),")
-    .replace(/EXCLUDED\.([a-z_]+)/gi, (_, column) => `VALUES(${column})`);
-  const queryParams = [];
-  statement = statement.replace(
-    /=\s*ANY\(\$(\d+)\)|\$(\d+)/g,
-    (match, anyIndex, parameterIndex) => {
-      const index = Number(anyIndex ?? parameterIndex) - 1;
-      const value = params[index];
-      queryParams.push(
-        anyIndex || !Array.isArray(value) ? value : JSON.stringify(value),
-      );
-      return anyIndex ? "IN (?)" : "?";
-    },
-  );
-  const hasReturningId = /\sRETURNING id\s*$/i.test(statement);
-  statement = statement.replace(/\sRETURNING id\s*$/i, "");
-  return connection.query(statement, queryParams).then(([rows]) => {
-    if (hasReturningId) {
-      return { rows: [{ id: rows.insertId }] };
-    }
-    return { rows: Array.isArray(rows) ? rows : [] };
-  });
-}
-
-const client = {
-  query: mysqlQuery,
-  release: () => connection.release(),
-};
+// Hosted databases such as Supabase require TLS; local Postgres usually does not.
+const isLocal = /@(localhost|127\.0\.0\.1)(:|\/)/.test(process.env.DATABASE_URL);
+const pool = new Pool({
+  connectionString: process.env.DATABASE_URL,
+  ssl: isLocal ? false : { rejectUnauthorized: false },
+});
+const client = await pool.connect();
 
 // Every demo account uses the same password so the login page quick-pick buttons work.
 const DEMO_PASSWORD = "caretrack-demo";
@@ -49,7 +20,7 @@ const DEMO_PASSWORD = "caretrack-demo";
 const demoUsers = [
   { key: "admin", name: "Carla Mendoza", email: "admin@caretrack.demo", role: "admin", phone: "09170000001" },
   { key: "provider1", name: "Dr. Mira Santos", email: "provider@caretrack.demo", role: "provider", phone: "09170000002" },
-  { key: "provider2", name: "Nurse Joel Reyes", email: "nurse@caretrack.demo", role: "provider", phone: "09170000003" },
+  { key: "provider2", name: "Dr. Joel Reyes", email: "doctor2@caretrack.demo", role: "provider", phone: "09170000003" },
   { key: "patient", name: "Alex Morgan", email: "patient@caretrack.demo", role: "patient", phone: "09170000004" },
   { key: "caregiver", name: "Jordan Morgan", email: "caregiver@caretrack.demo", role: "caregiver", phone: "09170000005" },
 ];
@@ -258,7 +229,7 @@ try {
       `INSERT INTO caretrack_medications
          (patient_id, name, dosage, form, frequency, times_per_day, schedule_times,
           days_of_week, start_date, end_date, instructions, prescribed_by, active)
-       VALUES ($1, $2, $3, $4, 'daily', $5, $6, '[]', $7, $8, $9, $10, true)
+       VALUES ($1, $2, $3, $4, 'daily', $5, $6, '{}', $7, $8, $9, $10, true)
        RETURNING id`,
       [
         patientIds[patientIndex],
@@ -591,7 +562,7 @@ try {
     );
   }
 
-  // Sample coverage: Dr. Mira Santos is away for 3 days, Nurse Joel Reyes covers her patients.
+  // Sample coverage: Dr. Mira Santos is away for 3 days, Dr. Joel Reyes covers her patients.
   await client.query(
     `DELETE FROM caretrack_provider_coverage WHERE absent_provider_id = ANY($1) OR covering_provider_id = ANY($1)`,
     [[userIds.provider1, userIds.provider2]],
@@ -648,9 +619,72 @@ try {
     );
   }
 
+  await client.query("DELETE FROM caretrack_health_logs WHERE patient_id = ANY($1::int[])", [patientIds]);
+  await client.query("DELETE FROM caretrack_health_metrics WHERE patient_id = ANY($1::int[])", [patientIds]);
+  await client.query("DELETE FROM caretrack_risk_predictions WHERE patient_id = ANY($1::int[])", [patientIds]);
+  const metricTypes = ["blood_pressure", "blood_sugar", "heart_rate", "weight", "temperature"];
+  let seededMetrics = 0;
+  for (let patientIndex = 0; patientIndex < patientIds.length; patientIndex += 1) {
+    const patientId = patientIds[patientIndex];
+    for (let day = 6; day >= 0; day -= 1) {
+      const measuredAt = new Date();
+      measuredAt.setDate(measuredAt.getDate() - day);
+      measuredAt.setHours(8, 0, 0, 0);
+      for (let metricIndex = 0; metricIndex < metricTypes.length; metricIndex += 1) {
+        const metricType = metricTypes[metricIndex];
+        let value = 120 + patientIndex % 4;
+        let secondary = null;
+        let unit = "mmHg";
+        let outOfRange = false;
+        if (metricType === "blood_sugar") { value = 95 + patientIndex % 8; unit = "mg/dL"; }
+        if (metricType === "heart_rate") { value = 72 + patientIndex % 7; unit = "bpm"; }
+        if (metricType === "weight") { value = 62 + patientIndex * 0.4; unit = "kg"; }
+        if (metricType === "temperature") { value = 36.4 + (patientIndex % 3) * 0.1; unit = "°C"; }
+        if (metricType === "blood_pressure") secondary = 78 + patientIndex % 5;
+        if (patientIndex === 0 && day === 0 && metricType === "blood_pressure") {
+          value = 146;
+          secondary = 94;
+          outOfRange = true;
+        }
+        if (patientIndex === 0 && day === 0 && metricType === "blood_sugar") {
+          value = 158;
+          outOfRange = true;
+        }
+        await client.query(
+          `INSERT INTO caretrack_health_metrics
+            (patient_id, metric_type, value, secondary_value, unit, recorded_at, recorded_by, out_of_range)
+           VALUES ($1, $2, $3, $4, $5, $6, $7, $8)`,
+          [patientId, metricType, value, secondary, unit, measuredAt.toISOString(), demoUserIds.provider1, outOfRange],
+        );
+        seededMetrics += 1;
+      }
+      if (patientIndex === 0) {
+        await client.query(
+          `INSERT INTO caretrack_risk_predictions
+            (patient_id, risk_level, risk_score, prob_low, prob_moderate, prob_high, features, factors, created_at)
+           VALUES ($1, 'moderate', 68, 0.22, 0.68, 0.10, $2, $3, NOW())`,
+          [
+            patientId,
+            JSON.stringify({ adherence14: 82, healthOutOfRangeRate: 29, bloodPressureSystolic: 146, bloodSugarLatest: 158 }),
+            JSON.stringify([
+              { feature: "bloodPressureSystolic", label: "Latest systolic blood pressure", value: 146, typical: 120, impact: 0.24, text: "Recent systolic blood pressure is elevated at 146 mmHg." },
+              { feature: "healthOutOfRangeRate", label: "Health readings outside range", value: 29, typical: 0, impact: 0.19, text: "Several recent health readings are outside the configured range." },
+              { feature: "adherence14", label: "14-day adherence", value: 82, typical: 90, impact: 0.12, text: "14-day dose adherence is below the recent-care target." },
+            ]),
+          ],
+        );
+      }
+    }
+    await client.query(
+      `INSERT INTO caretrack_health_logs (patient_id, recorded_at, symptoms, notes, recorded_by)
+       VALUES ($1, NOW(), $2, $3, $4)`,
+      [patientId, ["fatigue"], "Demo symptom log for defense walkthrough.", demoUserIds.provider1],
+    );
+  }
+
   await client.query("COMMIT");
   console.log(
-    `Seeded ${demoUsers.length} demo users, ${patientIds.length} fictional patients, ${medicationIds.length} medications, ${events.length} dose events, ${seededReports} reports and ${seededInsights} AI insights.`,
+    `Seeded ${demoUsers.length} demo users, ${patientIds.length} fictional patients, ${medicationIds.length} medications, ${events.length} dose events, ${seededMetrics} health metrics, ${seededReports} reports and ${seededInsights} AI insights.`,
   );
 } catch (error) {
   await client.query("ROLLBACK");

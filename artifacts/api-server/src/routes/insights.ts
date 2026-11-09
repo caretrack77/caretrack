@@ -115,7 +115,7 @@ router.post(
         : analytics.adherenceRate >= 50
           ? "yellow"
           : "red";
-    const inserted = await db
+    const [insight] = await db
       .insert(aiInsightsTable)
       .values({
         patientId: params.data.id,
@@ -125,8 +125,7 @@ router.post(
         recommendations: suggestion.recommendations,
         source: suggestion.source,
       })
-      ;
-    const [insight] = await db.select().from(aiInsightsTable).where(eq(aiInsightsTable.id, Number(inserted[0].insertId))).limit(1);
+      .returning();
     await writeAuditLog(user.id, "report_generated", "ai_insight", insight.id, {
       patientId: params.data.id,
       source: suggestion.source,

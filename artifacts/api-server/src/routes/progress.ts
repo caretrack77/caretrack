@@ -37,7 +37,7 @@ function plannedDoses(medication: typeof medicationsTable.$inferSelect): number 
     day <= new Date(`${medication.endDate}T00:00:00Z`);
     day = new Date(day.getTime() + DAY_MS)
   ) {
-    if ((medication.daysOfWeek as unknown as number[]).includes(day.getUTCDay())) total += perDay;
+    if (medication.daysOfWeek.includes(day.getUTCDay())) total += perDay;
   }
   return total;
 }
@@ -70,7 +70,7 @@ router.get("/patients/:id/medication-progress", async (req, res): Promise<void> 
       medicationId: doseLogsTable.medicationId,
       status: doseLogsTable.status,
       total: count(),
-      due: sql<number>`sum(case when ${doseLogsTable.scheduledTime} <= ${now} then 1 else 0 end)`,
+      due: sql<number>`count(*) filter (where ${doseLogsTable.scheduledTime} <= ${now})::int`,
     })
     .from(doseLogsTable)
     .where(eq(doseLogsTable.patientId, patientId))

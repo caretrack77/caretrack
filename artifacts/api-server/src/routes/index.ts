@@ -15,6 +15,8 @@ import messagesRouter from "./messages";
 import coverageRouter from "./coverage";
 import aiRouter from "./ai";
 import careRouter from "./care";
+import clinicalRouter from "./clinical";
+import eventsRouter from "./events";
 
 const router: IRouter = Router();
 
@@ -34,5 +36,7 @@ router.use(messagesRouter);
 router.use(coverageRouter);
 router.use(aiRouter);
 router.use(careRouter);
+router.use(clinicalRouter);
+router.use(eventsRouter);
 
 export default router;

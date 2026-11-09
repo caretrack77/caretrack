@@ -17,6 +17,95 @@ export const HealthCheckResponse = zod.object({
 })
 
 
+export const ListHealthMetricsParams = zod.object({
+  "patientId": zod.coerce.number().int()
+})
+
+export const ListHealthMetricsResponseItem = zod.object({
+  "id": zod.number().int(),
+  "patientId": zod.number().int(),
+  "metricType": zod.string(),
+  "value": zod.number(),
+  "secondaryValue": zod.number().nullish(),
+  "unit": zod.string(),
+  "recordedAt": zod.coerce.date(),
+  "recordedBy": zod.number().int().nullish(),
+  "note": zod.string().nullish(),
+  "outOfRange": zod.boolean(),
+  "active": zod.boolean().optional(),
+  "createdAt": zod.coerce.date().optional()
+})
+export const ListHealthMetricsResponse = zod.array(ListHealthMetricsResponseItem)
+
+
+export const CreateHealthMetricParams = zod.object({
+  "patientId": zod.coerce.number().int()
+})
+
+export const CreateHealthMetricBody = zod.object({
+  "metricType": zod.enum(['blood_pressure', 'blood_sugar', 'weight', 'heart_rate', 'temperature']),
+  "value": zod.number(),
+  "secondaryValue": zod.number().optional(),
+  "unit": zod.string(),
+  "recordedAt": zod.coerce.date().optional(),
+  "note": zod.string().optional()
+})
+
+export const CreateHealthMetricResponse = zod.object({
+  "id": zod.number().int(),
+  "patientId": zod.number().int(),
+  "metricType": zod.string(),
+  "value": zod.number(),
+  "secondaryValue": zod.number().nullish(),
+  "unit": zod.string(),
+  "recordedAt": zod.coerce.date(),
+  "recordedBy": zod.number().int().nullish(),
+  "note": zod.string().nullish(),
+  "outOfRange": zod.boolean(),
+  "active": zod.boolean().optional(),
+  "createdAt": zod.coerce.date().optional()
+})
+
+
+export const ListHealthLogsParams = zod.object({
+  "patientId": zod.coerce.number().int()
+})
+
+export const ListHealthLogsResponseItem = zod.object({
+  "id": zod.number().int(),
+  "patientId": zod.number().int(),
+  "recordedAt": zod.coerce.date(),
+  "symptoms": zod.array(zod.string()),
+  "notes": zod.string().nullish(),
+  "recordedBy": zod.number().int().nullish(),
+  "active": zod.boolean().optional(),
+  "createdAt": zod.coerce.date().optional()
+})
+export const ListHealthLogsResponse = zod.array(ListHealthLogsResponseItem)
+
+
+export const CreateHealthLogParams = zod.object({
+  "patientId": zod.coerce.number().int()
+})
+
+export const CreateHealthLogBody = zod.object({
+  "symptoms": zod.array(zod.string()),
+  "notes": zod.string().optional(),
+  "recordedAt": zod.coerce.date().optional()
+})
+
+export const CreateHealthLogResponse = zod.object({
+  "id": zod.number().int(),
+  "patientId": zod.number().int(),
+  "recordedAt": zod.coerce.date(),
+  "symptoms": zod.array(zod.string()),
+  "notes": zod.string().nullish(),
+  "recordedBy": zod.number().int().nullish(),
+  "active": zod.boolean().optional(),
+  "createdAt": zod.coerce.date().optional()
+})
+
+
 /**
  * @summary Sign in with a demo account
  */
@@ -41,7 +130,8 @@ export const LoginResponse = zod.object({
   "email": zod.string(),
   "role": zod.enum(['admin', 'provider', 'patient', 'caregiver']),
   "active": zod.boolean(),
-  "mustChangePassword": zod.boolean()
+  "mustChangePassword": zod.boolean(),
+  "privacyConsentAccepted": zod.boolean()
 }),zod.null()])
 })
 
@@ -66,7 +156,8 @@ export const ChangePasswordResponse = zod.object({
   "email": zod.string(),
   "role": zod.enum(['admin', 'provider', 'patient', 'caregiver']),
   "active": zod.boolean(),
-  "mustChangePassword": zod.boolean()
+  "mustChangePassword": zod.boolean(),
+  "privacyConsentAccepted": zod.boolean()
 })
 
 
@@ -107,7 +198,8 @@ export const VerifyLoginOtpResponse = zod.object({
   "email": zod.string(),
   "role": zod.enum(['admin', 'provider', 'patient', 'caregiver']),
   "active": zod.boolean(),
-  "mustChangePassword": zod.boolean()
+  "mustChangePassword": zod.boolean(),
+  "privacyConsentAccepted": zod.boolean()
 })
 
 
@@ -120,7 +212,24 @@ export const GetCurrentUserResponse = zod.object({
   "email": zod.string(),
   "role": zod.enum(['admin', 'provider', 'patient', 'caregiver']),
   "active": zod.boolean(),
-  "mustChangePassword": zod.boolean()
+  "mustChangePassword": zod.boolean(),
+  "privacyConsentAccepted": zod.boolean()
+})
+
+
+/**
+ * @summary Accept the current CareTrack privacy notice
+ */
+
+
+
+export const AcceptPrivacyConsentBody = zod.object({
+  "version": zod.string().min(1)
+})
+
+export const AcceptPrivacyConsentResponse = zod.object({
+  "accepted": zod.boolean(),
+  "version": zod.string()
 })
 
 
@@ -139,7 +248,8 @@ export const ListUsersResponseItem = zod.object({
   "email": zod.string(),
   "role": zod.enum(['admin', 'provider', 'patient', 'caregiver']),
   "active": zod.boolean(),
-  "mustChangePassword": zod.boolean()
+  "mustChangePassword": zod.boolean(),
+  "privacyConsentAccepted": zod.boolean()
 }).and(zod.object({
   "phone": zod.string().nullable(),
   "createdAt": zod.coerce.date()
@@ -171,7 +281,8 @@ export const CreateUserResponse = zod.object({
   "email": zod.string(),
   "role": zod.enum(['admin', 'provider', 'patient', 'caregiver']),
   "active": zod.boolean(),
-  "mustChangePassword": zod.boolean()
+  "mustChangePassword": zod.boolean(),
+  "privacyConsentAccepted": zod.boolean()
 }).and(zod.object({
   "phone": zod.string().nullable(),
   "createdAt": zod.coerce.date()
@@ -206,7 +317,8 @@ export const UpdateUserResponse = zod.object({
   "email": zod.string(),
   "role": zod.enum(['admin', 'provider', 'patient', 'caregiver']),
   "active": zod.boolean(),
-  "mustChangePassword": zod.boolean()
+  "mustChangePassword": zod.boolean(),
+  "privacyConsentAccepted": zod.boolean()
 }).and(zod.object({
   "phone": zod.string().nullable(),
   "createdAt": zod.coerce.date()
@@ -717,7 +829,7 @@ export const MarkPatientMessagesReadResponse = zod.void()
 
 
 /**
- * @summary Active doctors and nurses, for assignment and coverage pickers
+ * @summary Active doctors, for assignment and coverage pickers
  */
 export const ListProvidersResponseItem = zod.object({
   "id": zod.number().int(),
@@ -917,6 +1029,7 @@ export const ListRiskPredictionsResponseItem = zod.object({
   "probLow": zod.number(),
   "probModerate": zod.number(),
   "probHigh": zod.number(),
+  "confidence": zod.number().describe('Maximum predicted class probability.'),
   "factors": zod.array(zod.object({
   "feature": zod.string(),
   "label": zod.string(),
@@ -946,6 +1059,7 @@ export const GetPatientRiskResponse = zod.object({
   "probLow": zod.number(),
   "probModerate": zod.number(),
   "probHigh": zod.number(),
+  "confidence": zod.number().describe('Maximum predicted class probability.'),
   "factors": zod.array(zod.object({
   "feature": zod.string(),
   "label": zod.string(),
@@ -1412,5 +1526,83 @@ export const ListAuditLogsResponseItem = zod.object({
   "createdAt": zod.coerce.date()
 })
 export const ListAuditLogsResponse = zod.array(ListAuditLogsResponseItem)
+
+
+export const ListMedicalHistoryParams = zod.object({
+  "patientId": zod.coerce.number().int()
+})
+
+export const ListMedicalHistoryResponseItem = zod.record(zod.string(), zod.unknown())
+export const ListMedicalHistoryResponse = zod.array(ListMedicalHistoryResponseItem)
+
+
+export const CreateMedicalHistoryParams = zod.object({
+  "patientId": zod.coerce.number().int()
+})
+
+export const CreateMedicalHistoryBody = zod.object({
+  "occurredOn": zod.coerce.date(),
+  "title": zod.string(),
+  "notes": zod.string().optional()
+})
+
+export const CreateMedicalHistoryResponse = zod.record(zod.string(), zod.unknown())
+
+
+export const ListConsultationsParams = zod.object({
+  "patientId": zod.coerce.number().int()
+})
+
+export const ListConsultationsResponseItem = zod.record(zod.string(), zod.unknown())
+export const ListConsultationsResponse = zod.array(ListConsultationsResponseItem)
+
+
+export const CreateConsultationParams = zod.object({
+  "patientId": zod.coerce.number().int()
+})
+
+export const CreateConsultationBody = zod.object({
+  "consultationDate": zod.coerce.date(),
+  "complaint": zod.string(),
+  "assessment": zod.string().optional(),
+  "notes": zod.string().optional(),
+  "followUp": zod.string().optional(),
+  "appointmentId": zod.number().int().optional()
+})
+
+export const CreateConsultationResponse = zod.record(zod.string(), zod.unknown())
+
+
+export const ListPatientPrescriptionsParams = zod.object({
+  "patientId": zod.coerce.number().int()
+})
+
+export const ListPatientPrescriptionsResponseItem = zod.record(zod.string(), zod.unknown())
+export const ListPatientPrescriptionsResponse = zod.array(ListPatientPrescriptionsResponseItem)
+
+
+export const CreatePrescriptionParams = zod.object({
+  "consultationId": zod.coerce.number().int()
+})
+
+export const CreatePrescriptionBody = zod.object({
+  "medicationName": zod.string(),
+  "dosage": zod.string(),
+  "frequency": zod.string(),
+  "durationDays": zod.number().int(),
+  "instructions": zod.string().optional(),
+  "scheduleTimes": zod.array(zod.string()),
+  "form": zod.string().optional()
+})
+
+export const CreatePrescriptionResponse = zod.record(zod.string(), zod.unknown())
+
+
+export const ListPatientRecordHistoryParams = zod.object({
+  "patientId": zod.coerce.number().int()
+})
+
+export const ListPatientRecordHistoryResponseItem = zod.record(zod.string(), zod.unknown())
+export const ListPatientRecordHistoryResponse = zod.array(ListPatientRecordHistoryResponseItem)
 
 

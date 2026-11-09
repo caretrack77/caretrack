@@ -18,6 +18,25 @@ type DoseAlert = {
   scheduledTime: Date;
 };
 
+/** Patient account and assigned caregivers for clinical notifications. */
+export async function patientSideUsers(patientId: number): Promise<number[]> {
+  const [patientRows, caregiverRows] = await Promise.all([
+    db
+      .select({ userId: patientsTable.userId })
+      .from(patientsTable)
+      .where(eq(patientsTable.id, patientId)),
+    db
+      .select({ userId: patientCaregiverAssignmentsTable.caregiverId })
+      .from(patientCaregiverAssignmentsTable)
+      .where(eq(patientCaregiverAssignmentsTable.patientId, patientId)),
+  ]);
+  return [...new Set(
+    [...patientRows, ...caregiverRows]
+      .map((row) => row.userId)
+      .filter((userId): userId is number => userId !== null),
+  )];
+}
+
 /** Users who should hear about a patient's own doses: the patient account and linked caregivers. */
 async function patientAudience(patientIds: number[]) {
   if (patientIds.length === 0) return new Map<number, number[]>();

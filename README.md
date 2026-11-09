@@ -1,282 +1,276 @@
 # CareTrack
 
-**An AI-Driven Patient Care Platform for Medication Adherence Tracking and Data-Analytics-Based Automated Reporting**
+**An AI-assisted patient-care platform for medication adherence tracking, health monitoring, and care-team reporting.**
 
-CareTrack helps healthcare providers, patients, and caregivers stay on top of medication schedules. It tracks every scheduled dose, calculates adherence, flags patients who need support, generates AI-assisted insights, and produces automated PDF/CSV reports.
+CareTrack helps patients, caregivers, and doctors coordinate medication schedules and follow-up. It records scheduled doses and health observations, highlights adherence and health concerns, provides guarded AI decision support, and generates downloadable reports. It is a demonstration and care-coordination aid, not a medical device or a substitute for clinical judgment.
 
----
+## What is new
 
-## Tech stack
+The recent implementation work extended the original adherence tracker with health-aware risk prediction and reports, patient health recording, caregiver recording permissions, guarded chatbot answers, mobile/offline support, and authenticated live updates. The feature walkthrough below explains the user experience and the data flow; the change log records the corresponding implementation areas and how to demonstrate them.
+
+## Technology and architecture
 
 | Layer | Technology |
 |---|---|
-| Frontend | React 19, Vite, Tailwind CSS, Recharts, TanStack Query, Wouter |
-| Backend | Node.js, Express 5, TypeScript |
-| Database | Local MySQL 8 with Drizzle ORM |
-| Auth | Session cookies (HTTP-only), bcrypt password hashing, role-based access control |
-| AI | Anthropic Claude API, with a rule-based fallback |
-| Reports | PDFKit (PDF) and CSV export |
-| API contract | OpenAPI 3.1 spec, with a generated React Query client and Zod validators (Orval) |
+| Web app | React 19, Vite, Tailwind CSS, Recharts, TanStack Query, Wouter |
+| API | Node.js, Express 5, TypeScript |
+| Database | PostgreSQL (Supabase) with Drizzle ORM |
+| Authentication | HTTP-only session cookies, bcrypt password hashes, role and patient-access checks |
+| AI | Custom TypeScript Random Forest, optional Anthropic Claude insights, optional Groq chatbot |
+| Reports | PDFKit PDF and CSV export |
+| API contract | OpenAPI 3.1, generated React Query client and Zod validators (Orval) |
+| Offline support | Installable PWA, service worker, IndexedDB schedule cache and offline dose queue |
 
-## Project structure
-
-```
+```text
 artifacts/
-  api-server/          Express API
-    src/routes/        HTTP endpoints (auth, users, patients, medications, doses,
-                       analytics, insights, notifications, reports, admin)
-    src/lib/           Business logic: auth, access control, dose scheduler,
-                       analytics, AI insights, reports, PDF/CSV export, background jobs
-    scripts/seed.mjs   Demo data seeder
-  caretrack/           React web app (src/App.tsx holds the pages)
+  api-server/
+    src/routes/        Express endpoints, including clinical, health, AI,
+                       messaging, notification and report routes
+    src/lib/           Authentication, access control, scheduler, analytics,
+                       audit, AI, encryption and report services
+    scripts/seed.mjs   Fictional demo data
+  caretrack/
+    src/App.tsx        React app, pages and user flows
+    public/sw.js       PWA service worker and offline reminder support
 lib/
-  db/                  Drizzle schema (src/schema/caretrack.ts) and DB connection
-  api-spec/            OpenAPI spec (openapi.yaml) and code generation config
+  db/                  Drizzle schema and PostgreSQL connection
+  api-spec/            OpenAPI contract and code generation config
   api-client-react/    Generated React Query hooks
-  api-zod/             Generated Zod request/response validators
+  api-zod/             Generated request/response validators
+docs/
+  ALIGNMENT.md         Requirement status, evidence plan and paper notes
+  evidence/            Manual offline/realtime test steps
 ```
 
 ## Setup
 
-**Requirements:** Node.js 22+, pnpm 10+ (`npm install -g pnpm`), and MySQL 8.0+.
+**Requirements:** Node.js 22+ and pnpm 10+.
 
-On Windows, make sure the MySQL service is running. If the service is named
-`MySQL90`, open PowerShell as Administrator and run:
-
-```powershell
-Start-Service MySQL90
-```
-
-If you are using **Command Prompt (cmd.exe)** instead of PowerShell, run:
-
-```cmd
-net start MySQL90
-```
-
-If Command Prompt reports **System error 1058**, the service is disabled.
-From an Administrator Command Prompt, enable it first:
-
-```cmd
-sc config MySQL90 start= auto
-net start MySQL90
-```
-
-If the service is stopped, the app and seed command fail with
-`ECONNREFUSED 127.0.0.1:3306`. Check the service status with:
-
-```powershell
-Get-Service MySQL90
-```
-
-The status must be `Running` before starting CareTrack.
-
-If `mysql` is not recognized, use the full client path or add this directory
-to your PATH:
-
-```text
-C:\Program Files\MySQL\MySQL Server 9.0\bin
-```
-
-1. **Install dependencies**
+1. Install dependencies:
    ```bash
    pnpm install
    ```
-2. **Configure the environment.** Copy `.env.example` to `.env` and replace the placeholders:
-   - `DATABASE_URL`: use the MySQL username and password from your local installation, for example `mysql://root:YOUR_MYSQL_PASSWORD@127.0.0.1:3306/health_monitoring`.
-   - `SESSION_SECRET`: any long random string.
-   - `ANTHROPIC_API_KEY` *(optional)*: enables Claude-generated insights. Without it, CareTrack uses its rule-based engine.
-3. **Create the MySQL database and tables.** Run this from **Command Prompt** so `<` is treated as input redirection:
-   ```bash
-   mysql -u root -p < database.sql
-   ```
-   On Windows, if `mysql` is not in PATH, run this from **Command Prompt**:
-   ```cmd
-   "C:\Program Files\MySQL\MySQL Server 9.0\bin\mysql.exe" -u root -p < database.sql
-   ```
-   Enter the MySQL root password when prompted. This password is created during MySQL installation; it is not defined by `database.sql` or `.env.example`.
-   The SQL creates the `health_monitoring` database, loads the supplied clinical tables and seed data, and adds the `caretrack_*` compatibility tables required by the current API.
-4. **Apply Drizzle schema updates when needed.** Run this only when the Drizzle schema changes; do not use it as a replacement for importing `database.sql`.
+2. Copy `.env.example` to `.env`. Set `DATABASE_URL` to the Supabase **Session pooler** connection string and set `SESSION_SECRET` to a long random value. The direct `db.<ref>.supabase.co` host may require IPv6.
+3. Create/update the database schema and seed demo records:
    ```bash
    pnpm db:push
-   ```
-5. **Load the demo data** after the database import:
-   ```bash
    pnpm db:seed
    ```
-   The seed command is intended for a newly imported database. It resets demo reports,
-   insights, and notifications, but repeated runs may require cleaning or re-importing
-   the database if duplicate medication records cause a foreign-key error.
-6. **Start the app**
+   The seed contains fictional patients and demo accounts. It is safe to rerun for a demo reset.
+4. Start the API and web app:
    ```bash
    pnpm dev
    ```
-   Open **http://localhost:5173**. The API runs on port 8080, and Vite forwards `/api` requests to it.
+   Open http://localhost:5173. The API listens on port 8080 by default; Vite forwards `/api` requests.
 
-### Windows run sequence
+### Environment variables
 
-From the repository root, run these commands in order. Use an Administrator PowerShell
-to start MySQL:
+| Variable | Required | Purpose |
+|---|---:|---|
+| `DATABASE_URL` | Yes | PostgreSQL/Supabase connection string |
+| `SESSION_SECRET` | Yes | Secret used by session authentication |
+| `PORT`, `WEB_PORT` | No | API and web development ports (8080 and 5173 by default) |
+| `ANTHROPIC_API_KEY` | No | Enables Claude-generated insights; rule-based insights remain available without it |
+| `GROQ_API_KEY`, `GROQ_MODEL` | No | Enables guarded Groq chatbot replies; model defaults to `llama-3.3-70b-versatile` |
+| `OTP_ENABLED` | No | Enables the second login step; enabled in the example configuration |
+| `OTP_OFFLINE_FALLBACK` | No | Shows a code in the local demo if delivery is unavailable; disable for production. Production defaults to disabled. |
+| `GMAIL_USER`, `GMAIL_APP_PASSWORD` | No | Gmail app-password delivery for login codes |
+| `SMS_PROVIDER` | No | `semaphore`, `twilio`, or `android-gateway` SMS delivery |
+| `SEMAPHORE_*`, `TWILIO_*` | No | Credentials and sender details for the selected SMS provider |
+| `SMS_GATEWAY_URL`, `SMS_GATEWAY_USER`, `SMS_GATEWAY_PASSWORD` | No | Optional Android SMS Gateway on the same local network |
 
-```powershell
-cd "D:\My Files\Downloads\Caretrack\caretrack"
-Start-Service MySQL90
-```
-
-Then open **Command Prompt**, import the database, and return to the repository root:
-
-```cmd
-cd /d "D:\My Files\Downloads\Caretrack\caretrack"
-"C:\Program Files\MySQL\MySQL Server 9.0\bin\mysql.exe" -u root -p < database.sql
-```
-
-Finally, from the repository root, run:
-
-```bash
-pnpm db:seed
-pnpm dev
-```
-
-Alternatively, run `net start MySQL90` from an Administrator Command Prompt. Update
-`DATABASE_URL` in `.env` with the MySQL username and password used by your
-local installation before running the seed command.
+Never put API keys, app passwords, session secrets, or real patient information in source control. Configure real recipient contact details before testing live OTP delivery; seeded demo addresses and phone numbers are fictional.
 
 ### Production
 
 ```bash
-pnpm build      # typecheck, then build the API and the web app
-pnpm start      # one server on PORT (default 8080) serves both the API and the web app
+pnpm build
+pnpm start
 ```
+
+The production server listens on `PORT` (8080 by default) and serves the API and built web app. Configure HTTPS at the hosting/reverse-proxy layer. Database availability, backups, and service uptime depend on the selected hosting providers.
 
 ## Demo accounts
 
-All demo accounts use the password **`caretrack-demo`**. The login page has quick-pick buttons for each one.
+All demo accounts use **`caretrack-demo`** as their initial password. New users must change temporary passwords when prompted. Patient and caregiver accounts are blocked on desktop browsers: use a physical phone, Android emulator, or browser device emulation for the defense demonstration. Keep this policy enabled in production.
 
-| Role | Email | Sees |
+| Role | Email | Demo scope |
 |---|---|---|
-| Admin | admin@caretrack.demo | All patients, user management, audit log |
-| Provider | provider@caretrack.demo | Dr. Mira Santos: 5 assigned patients |
-| Provider | nurse@caretrack.demo | Nurse Joel Reyes: 5 assigned patients |
-| Patient | patient@caretrack.demo | Alex Morgan: own schedule and stats |
-| Caregiver | caregiver@caretrack.demo | Jordan Morgan: read-only view of Alex |
+| Admin | `admin@caretrack.demo` | User/team management, all patients, audit activity |
+| Doctor | `provider@caretrack.demo` | Dr. Mira Santos and five assigned patients |
+| Doctor | `doctor2@caretrack.demo` | Dr. Joel Reyes and five assigned patients; also covers Dr. Mira Santos's patients in the seed |
+| Patient | `patient@caretrack.demo` | Alex Morgan's own schedule and health/adherence views; mobile browser only |
+| Caregiver | `caregiver@caretrack.demo` | Jordan Morgan's linked-patient support; mobile browser only |
 
-The seed data includes 10 fictional patients with adherence between 37% and 96% (so there are green, yellow, and red risk flags), 45 days of dose history, 7 pre-generated reports, 10 AI insights, and a weekly report schedule.
+The database/API retains the internal role identifier `provider` for doctors. Product-facing roles are Admin, Doctor, Patient, and Caregiver.
 
-## Login codes (OTP)
+## Feature walkthrough: what users can do and how it works
 
-After entering a correct password, users choose to receive a 6-digit code by **text message (SMS)** or **Gmail**. Each code expires after 5 minutes and allows 5 attempts, and a new code can be requested after 30 seconds.
+### Accounts, privacy, and permissions
 
-- **Online:** set `GMAIL_USER` and `GMAIL_APP_PASSWORD` for email codes, and `SMS_PROVIDER` for text messages. The SMS options are Semaphore, Twilio, or the *SMS Gateway for Android* app. See *Setting up real Gmail and SMS* below.
-- **Offline:** the Android gateway sends SMS from a phone on the same Wi-Fi network, so it works without internet. If nothing is configured, or sending fails, the login screen shows the code in a yellow **Offline mode** box. This keeps the demo working without any setup. Set `OTP_OFFLINE_FALLBACK=false` for a real deployment.
-- Demo accounts have fictional mobile numbers (09170000001–05), so SMS codes will only arrive if you change a number to your own under **Team access**.
+- Users sign in with a password and, when OTP is enabled, verify a 6-digit one-time code by SMS or email. Codes expire, attempts are limited, and a resend cooldown applies.
+- The admin can create, edit, deactivate, and reset team accounts. Temporary passwords must be changed at first use. Users can change their password from My account; password changes invalidate other sessions.
+- A versioned privacy-consent record is required before protected application APIs are available.
+- The interface is role-specific, but authorization is also enforced on the API. Doctors see assigned or covered patients, caregivers see linked patients, and patients see their own records. Caregivers can record supported patient doses and health observations but cannot edit medication/profile data or send messages.
 
-### Setting up real Gmail and SMS
+### Patient records and clinical workflow
 
-After changing `.env`, restart the server. Then go to **Team access > Login code delivery** and click **Send test** to confirm it works.
+- Doctors and admins can manage patient profiles and provider assignments. Doctor coverage grants temporary access to another doctor's caseload for a date range; patients return to their original assignment when coverage ends.
+- A dated medical-history API supports patient entries and doctor review/editing. Consultation records can capture a complaint, assessment, notes, follow-up, and optional check-up link.
+- A doctor can create a prescription from a consultation. The API creates the medication and dose schedule and notifies the patient with the instructions. The patient prescription view also displays the medication instructions.
+- Clinical history and medication edits/deletes have soft-delete and before/after record-history support in implemented routes. Coverage is not yet universal across every clinical entity; see [Known limitations](#known-limitations).
+- The Check-ups page supports appointments and reminders. Lab results and uploaded prescription documents are stored encrypted.
 
-**Gmail**
-1. Turn on 2-Step Verification for the Gmail account that will send the codes (Google Account > Security).
-2. Go to https://myaccount.google.com/apppasswords, create an app password named "CareTrack", and copy the 16-character code.
-3. In `.env`, set `GMAIL_USER=yourname@gmail.com` and `GMAIL_APP_PASSWORD=` followed by the 16-character code with no spaces.
-4. Give each user a real email address under **Team access > Edit**. Codes can't reach the `@caretrack.demo` addresses.
+### Medication schedules, adherence, and reminders
 
-**SMS: choose one**
-- **SMS Gateway for Android (free, works offline over Wi-Fi):** install *SMS Gateway for Android* from the Play Store on a phone with load, and turn on its **Local server**. In `.env`, set `SMS_PROVIDER=android-gateway`, `SMS_GATEWAY_URL=http://<phone-ip>:8080`, and `SMS_GATEWAY_USER` / `SMS_GATEWAY_PASSWORD` to the values shown in the app. The phone and the computer must be on the same Wi-Fi network.
-- **Semaphore (Philippines, paid credits):** create an account at semaphore.co. In `.env`, set `SMS_PROVIDER=semaphore` and `SEMAPHORE_API_KEY`.
-- **Twilio (international, free trial):** in `.env`, set `SMS_PROVIDER=twilio`, `TWILIO_ACCOUNT_SID`, `TWILIO_AUTH_TOKEN`, and `TWILIO_FROM_NUMBER`.
+- Medication schedules support daily, twice-daily, every-X-hours, and selected-day recurrence. Dose events are generated from active schedules.
+- Patients can mark doses Taken, Missed, or Skipped. The log records scheduled time, confirmation time, and who logged it. The patient dashboard shows recent adherence, streaks, charts, and course progress.
+- A background job runs approximately once per minute. It ensures today's dose events exist, sends due reminders, marks doses missed after the two-hour grace period, sends alerts, and processes due reports and appointment reminders. The Random Forest is retrained periodically in the background.
+- The demo's **Mark a dose due now** and **Simulate 2 hours** controls let a doctor exercise reminders and missed-dose handling without waiting for the real schedule.
+- A per-patient reminder-escalation settings table has safe defaults, but the staged repeat/caregiver/doctor escalation flow is not yet wired into the scheduler or UI. Do not treat configurable escalation as an available feature yet.
 
-Then put real mobile numbers on the accounts under **Team access > Edit**.
+### Health observations and caregiver recording
 
-When everything works, set `OTP_OFFLINE_FALLBACK=false` so codes are never shown on screen.
+- Patients, doctors, and linked caregivers can record supported health metrics and symptom observations. Configurable ranges identify out-of-range readings; critical readings can generate notifications.
+- Health records are persistent and included in patient views and reports. Caregiver permissions are patient-scoped and do not grant medication or profile editing rights.
 
-## Accounts and passwords
+### Random Forest risk prediction and AI insights
 
-- The admin creates doctor accounts under **Team access > Add doctor**. A strong temporary password is generated automatically, and the eye button shows it. After saving, the screen displays the sign-in details to share with the doctor.
-- At first sign-in, a new user must create their own password before they can use the app. The server blocks every other page until they do.
-- Every user can change their password anytime under **My account**. Doing so signs out their other devices.
-- An admin can reset a forgotten password from **Team access > Edit**. The user then gets another temporary password and must change it at next sign-in.
-- All password fields have a show/hide (eye) button.
+CareTrack predicts the risk of poor adherence in the following seven days as low, moderate, or high. The in-repository TypeScript Random Forest uses rolling 14-day input windows, 7-day outcome labels, 60 CART trees, bootstrap samples, a square-root-sized random feature subset, Gini impurity, maximum depth 6, minimum leaf size 3, and probability averaging (soft voting). Its 15 features combine adherence, regimen/demographic signals, and recent health signals.
 
-## Features (defense walkthrough)
+The displayed confidence is the highest class probability. It is not calibrated clinical certainty. Feature importance and patient deviations are used to explain top factors and suggest follow-up actions. The model retrains on a schedule and can also be retrained from the AI risk prediction page. Demo data and model output have not been clinically validated; no generalizable accuracy claim is made here.
 
-1. **Authentication and access control.** Log in as each role and notice that the sidebar changes by role. The backend enforces the same rules: a provider calling `/api/users` gets a 403 error. Passwords are hashed with bcrypt, and sessions use HTTP-only cookies.
-2. **User management (Admin > Team access).** Create, edit, and deactivate users. Deactivated users can no longer sign in.
-3. **Audit log (Admin > Audit activity).** Records logins, logouts, logged doses, generated and downloaded reports, and changes to patients and medications.
-4. **Patient management (Provider > Patients).** Add and edit patient profiles (age, sex, contact details, conditions, allergies) and assign them to providers. The patient detail page shows medications, adherence history, notes, and AI insights.
-5. **Medication management.** Medications support daily, twice-daily, every-X-hours, and specific-day schedules. Dose events are generated automatically from the schedule.
-6. **Adherence tracking (Patient > Today's doses).** Patients mark each dose as Taken, Missed, or Skipped, with timestamps. They also see their 30-day adherence rate, current streak, a 7-day chart, and a 4-week history.
-7. **Reminders and missed doses.** Background jobs run every minute:
-   - When a dose comes due, the patient and caregiver get a **"Dose due now"** notification.
-   - Doses not logged within **2 hours** are automatically marked **Missed**, and an alert is sent.
-   - If a patient's adherence over the last 7 days drops below 50%, their providers get a **risk alert**.
-8. **Live demo tools (Provider > Overview):**
-   - **Mark a dose due now:** creates a dose for Alex Morgan due immediately. Sign in as the patient or caregiver to see the reminder.
-   - **Simulate 2 hours:** moves due doses past the grace period. They are marked missed, and alerts are sent.
-9. **Analytics dashboard (Provider > Analytics).** Filter by date range, patient, and medication. Charts include an adherence trend line (with 80% and 50% guide lines), a taken/missed/skipped donut chart, adherence by medication (colored by risk flag), and missed doses by time of day. A risk-flag table lists patients from lowest to highest adherence: Green ≥80%, Yellow 50–79%, Red <50%.
-10. **AI insights.** Generate an insight from the patient detail page, or from the patient's own dashboard to get friendly tips. Only anonymized counts and rates are sent to Claude. If the API key is missing or the call fails, CareTrack falls back to rule-based insights. Every AI view shows the disclaimer: *"AI suggestions support, not replace, clinical judgment."*
-11. **Automated reports (Reports).** Generate weekly or monthly reports, either for one patient or for a whole caseload. You can also create recurring schedules, which the background job runs automatically. Download reports as a **PDF** (patient info, risk flag, trend chart, medication list, adherence by medication, missed-dose summary, narrative, recommendations) or as **CSV** (raw dose log). Past reports stay in the report history.
-12. **Notification center.** The bell icon shows a badge with the unread count, and the list refreshes every 30 seconds.
-13. **Medication course progress.** Each medication shows its course progress (for example, "Day 5 of 7") and a segmented dose bar: green for taken, red for missed, gray for skipped, and pulsing yellow for doses that are due but not checked yet. A traffic-light indicator summarizes it: green ≥80%, yellow 50–79% (or a dose waiting to be checked), and red below 50%. Doses left unchecked trigger a reminder and become missed after 2 hours. The seed data includes 7-day courses for Alex Morgan, Priya Nair, and Mateo Cruz.
-14. **Add another course.** On a patient's profile, **Add new course** starts another medication course for the same patient. Pick a course length (3–30 days) to get a day-by-day progress bar.
-15. **Patient status filter (Patients).** Filter the patient list by **Critical** (red), **Needs attention** (yellow), **Stable** (green), or **No data**, alongside the text search. Every patient card shows a status badge.
-16. **Doctor coverage (Doctor coverage).** When a doctor is absent, the admin (or the doctor) hands their patients to a colleague for a date range. While coverage is active, the covering doctor:
-    - sees those patients, marked "Covering: …"
-    - can manage their medications
-    - receives their risk alerts and messages
+Claude is optional for care insights and report narratives. The server sends anonymized counts/rates rather than names, contact details, or clinical free text; if Claude is unavailable, rule-based recommendations are used. AI views carry the disclaimer: *“AI suggestions support, not replace, clinical judgment.”*
 
-    When coverage ends, the patients return to their original doctor automatically. To move a patient permanently, use **Edit profile > Assigned doctor**. *Sample data: Dr. Mira Santos is away for 3 days, and Nurse Joel Reyes covers her 5 patients. Sign in as nurse@caretrack.demo to see all 10.*
-17. **Doctor–patient messages (Messages).** Patients message their care team, and providers reply from a list of conversations with unread badges. Each new message notifies the other side. Caregivers can read the conversation but not send messages.
+### Ask CareTrack chatbot
 
-## AI component: Random Forest health-risk prediction
+The Ask CareTrack widget is for patient and caregiver accounts. Requests pass server-side checks in this order:
 
-CareTrack predicts each patient's **risk of poor medication adherence in the next 7 days** (low / moderate / high) with a **Random Forest classifier**. The model is written from scratch in `artifacts/api-server/src/lib/ml/`, so every step can be explained.
+1. Emergency and crisis wording gets fixed safety guidance.
+2. Requests for diagnosis, dose changes, injections, or prompt injection are refused with fixed safe responses.
+3. Off-topic questions are declined before patient context is fetched.
+4. Supported medication, appointment, adherence, and lab questions can use verified CareTrack records.
+5. Eligible questions may use Groq. Generated output is checked for unsafe dose-change advice before returning to the client.
 
-| Step | What happens |
-|---|---|
-| 1. Data | Each patient's historical dose logs: scheduled time, taken time, and status (taken, missed, skipped). |
-| 2. Parameters (12 features, from the last 14 days) | 14-day adherence, 7-day adherence, weekly trend, missed-dose streak, evening miss rate, morning miss rate, late-dose rate (more than 1 hour late), skip rate, doses per day, number of active medications, age, number of conditions |
-| 3. Labels | What actually happened in the following 7 days: **low** ≥80% taken, **moderate** 50–79%, **high** <50%. One training example is built per patient per day (sliding window). |
-| 4. Training | 60 CART decision trees. Each tree uses a bootstrap sample, √12 random features per split, Gini impurity, max depth 6, and at least 3 samples per leaf. |
-| 5. Prediction | Soft voting: the class probabilities are averaged over all trees. Risk score = P(high) + ½·P(moderate). |
-| 6. Evaluation | **Out-of-bag accuracy**: each tree is tested on the samples it never saw. On the demo data this is about 87%. |
-| 7. Explainability | **Feature importance** is the mean decrease in Gini impurity. Each patient's **top risk factors** are weighted by importance × deviation from the typical patient. |
-| 8. Decision support | Care-team recommendations, patient tasks and health tips. Doctors get an **AI risk alert** when a patient becomes high-risk. |
+Groq is optional. When it is not configured, fails, or times out, built-in schedule, adherence, appointment, medication, and health-tip answers remain available. Chatbot use is audited. Medical content must be reviewed by a licensed clinician, and deployments should configure local emergency guidance.
 
-The model retrains automatically every 6 hours, and on demand from **AI risk prediction → Retrain model now**. AI suggestions support, not replace, clinical judgment.
+### Secure messages and live updates
 
-## Panel recommendations implemented
+- Patients and doctors can exchange messages and view conversation history. Caregivers can read linked conversations but cannot send.
+- Messages are encrypted at rest with AES-256-GCM. API access checks remain in force when messages are read or sent.
+- An authenticated, role-scoped Server-Sent Events stream signals new messages and notifications to active clients. React Query polling remains a fallback if the stream disconnects.
 
-| Recommendation | Where it is in the system |
-|---|---|
-| Specific AI/ML algorithm (Random Forest), health-risk prediction, patient parameters and historical data | **AI risk prediction** page; **AI risk** card on each patient |
-| Predictive risk alerts for critical patients | Notification "AI risk alert: …" sent to the doctor (and any covering doctor) |
-| Decision-making support, patient care recommendations, tasks, health tips | Recommended actions on the AI risk card; **My care plan** on the patient's Today page |
-| Chatbot that only answers relevant questions | **Ask CareTrack** assistant: a topic guard declines off-topic questions, and urgent symptoms get emergency advice |
-| Messages and data encrypted (Data Privacy Act, RA 10173) | AES-256-GCM encryption at rest for messages and lab files; HTTPS-ready; passwords hashed with bcrypt |
-| Patient can upload laboratory results | **Lab results** panel: PDF/photo up to 5 MB, encrypted; the doctor reviews and comments |
-| Follow-up / check-up | **Check-ups** page and patient-profile panel, with a reminder 1 day before |
-| Distinguish the user action | Each dose shows **who logged it** (patient, caregiver, doctor, or system auto-miss), plus TAKEN LATE |
-| Notification with sound, not annoying | Soft chime at most once a minute, mute toggle, quiet hours 10 PM–7 AM, optional pop-up alerts |
-| SMS for patients without internet | SMS dose reminders and missed-dose alerts when an SMS provider is set |
-| Fail-safe when the internet is down; offline monitoring | Offline mode: cached pages and data, and doses logged offline sync automatically with their real time |
-| All functionality recorded in system logs | Audit log covers logins, doses, messages, lab files, AI training, assistant use, coverage, check-ups and reports |
+### Offline PWA reminders and dose sync
+
+- When online, the app caches upcoming schedule data in IndexedDB. Where browser and OS permissions permit, the service worker schedules Notifications API reminders; while the app is open, it can also show an in-app alarm/chime.
+- Dose confirmations made offline are queued locally with their original timestamps. On reconnect, the app syncs the queue and reports offline, syncing, and synced states.
+- The PWA is installable from a supported mobile browser, but closed-app notifications and alarms depend on browser, OS, power-saving, and permission settings. This is not a guarantee of native background execution.
+- Step-by-step manual checks are in [Offline and real-time evidence](docs/evidence/OFFLINE_REALTIME_MANUAL.md).
+
+### Analytics, reports, notifications, and audit
+
+- The Doctor analytics dashboard filters by date, patient, and medication. It charts adherence trends and dose outcomes, compares medications, and flags low-adherence patients.
+- Weekly and monthly reports can be generated for a patient or caseload; recurring schedules are processed by the background job. PDF and CSV downloads include dose/adherence information, health metric latest/average/out-of-range summaries, out-of-range readings, and (when available) AI risk, confidence, top factors, recommendations, and the AI disclaimer.
+- CSV fields are escaped and protected against spreadsheet formula injection.
+- The notification center shows dose, missed-dose, health, appointment, report, message, and AI-risk notifications. Audit activity records important account and clinical actions for admin review.
 
 ## Security notes
 
-- All database access goes through Drizzle's parameterized queries, so it is protected against SQL injection.
-- Every request body and parameter is validated with Zod schemas generated from the OpenAPI spec.
-- Users can only see patients they are linked to: providers see assigned patients, caregivers see linked patients, and patients see only themselves. This check runs on every endpoint.
-- Session tokens are random 256-bit values, and only their hashes are stored in the database.
-- Cookies are `secure` when the app runs over HTTPS.
-- CSV exports are protected against spreadsheet formula injection.
-- Secrets are kept in `.env`, which git ignores.
+- Passwords use bcrypt; session identifiers are random and only their hashes are persisted. Cookies are HTTP-only and secure in production.
+- Role checks and patient-scope checks run at the API boundary. Request bodies and parameters are validated with Zod types generated from the OpenAPI contract.
+- Login, OTP, password change, and chatbot endpoints are rate limited. Helmet security headers and a Vite/PWA-compatible Content Security Policy are configured.
+- The privacy-consent gate blocks application API use until the current consent version is accepted. Disable OTP offline fallback for production.
+- Claude receives anonymized aggregates; Groq receives the guarded care-plan context and current question, not user names, contact details, or clinical free text.
+- Message and laboratory-file content is encrypted at rest. CSV exports use formula-injection protection.
+- Keep secrets in the ignored `.env` file. Use HTTPS between browsers, the API, and cloud services in deployment; this repository cannot guarantee hosting configuration.
+
+## Change log: implemented additions
+
+This log records additions reflected in the current source, not items that remain planned.
+
+| Addition | Implementation areas | How to see it |
+|---|---|---|
+| Health metric and symptom recording, ranges, alerts, and seed records | `lib/db/src/schema/caretrack.ts`; `artifacts/api-server/src/routes/health.ts`; `artifacts/api-server/scripts/seed.mjs` | Open the Health page as Alex or a linked caregiver; record a reading and review its range/notification behavior. |
+| Caregiver-scoped dose and health recording | `artifacts/api-server/src/routes/doses.ts`; `artifacts/api-server/src/lib/patient-access.ts` | Use the caregiver account on a mobile browser and log an allowed dose or health observation. |
+| Guarded Groq chatbot and safe fallback | `artifacts/api-server/src/routes/care.ts`; `.env.example` | Ask CareTrack a supported question; try a restricted/off-topic question and compare the fixed response. |
+| Health-informed Random Forest features and confidence | `artifacts/api-server/src/lib/ml/risk-model.ts`; `artifacts/api-server/src/routes/ai.ts`; generated API packages; `artifacts/caretrack/src/App.tsx` | Open AI risk prediction or a patient risk card and inspect confidence and top factors. |
+| Health and AI evidence in PDF/CSV reports | `artifacts/api-server/src/lib/report-export.ts`; `artifacts/api-server/src/lib/report-service.ts`; seeded report data | Generate/download a weekly report for Alex and inspect health summaries, out-of-range readings, and AI fields where a prediction exists. |
+| Authenticated near-real-time message/notification events | `artifacts/api-server/src/routes/events.ts`; `artifacts/api-server/src/lib/realtime.ts`; `artifacts/api-server/src/routes/messages.ts`; `artifacts/caretrack/src/App.tsx`; `lib/api-spec/openapi.yaml` | Send a message between authorized sessions; observe the recipient update without refreshing. Disconnect the stream to see polling fallback. |
+| Offline schedule reminders and dose synchronization | `artifacts/caretrack/public/sw.js`; `artifacts/caretrack/src/App.tsx`; `docs/evidence/OFFLINE_REALTIME_MANUAL.md` | Follow the offline manual: cache the schedule, disconnect, log a dose, reconnect, and confirm the preserved timestamp syncs. |
+| Medical-history, consultation, prescription, and record-history API routes | `artifacts/api-server/src/routes/clinical.ts`; `artifacts/api-server/src/routes/medications.ts`; `lib/db/src/schema/caretrack.ts` | Exercise documented authenticated routes with an assigned patient; inspect the record-history endpoint as a doctor/admin. Full UI/entity coverage remains incomplete. |
+| Rate limits, privacy consent, security headers, and production-safe OTP behavior | `artifacts/api-server/src/lib/auth.ts`; middleware; `artifacts/api-server/src/lib/security.test.ts`; `.env.example` | Accept the privacy notice on first use; review response headers and rate-limit behavior in a local test deployment. |
+| Future-date checks and mobile-only patient/caregiver policy | API date validation and authentication; `artifacts/caretrack/public/manifest.webmanifest` | Try a patient/caregiver session on a physical phone, Android emulator, or browser device emulation; desktop sign-in is intentionally rejected. |
+
+## Already implemented (verified, not new in this change log)
+
+| Capability | Where to verify |
+|---|---|
+| Password/session authentication and role-based API access | `artifacts/api-server/src/lib/auth.ts`; route middleware |
+| Dose scheduling, adherence analytics, recurring reports, and notifications | `artifacts/api-server/src/lib/dose-scheduler.ts`; `artifacts/api-server/src/lib/analytics.ts`; `artifacts/api-server/src/lib/jobs.ts` |
+| Audit event storage and route-level audit calls | `lib/db/src/schema/caretrack.ts`; `artifacts/api-server/src/lib/audit.ts` |
+| AES-256-GCM encryption utilities and encrypted message/file storage | `artifacts/api-server/src/lib/encryption.ts`; message and laboratory routes |
+| OpenAPI contract with generated client and validators | `lib/api-spec/openapi.yaml`; `lib/api-client-react/`; `lib/api-zod/` |
+| PWA installation shell and responsive React interface | `artifacts/caretrack/public/manifest.webmanifest`; `artifacts/caretrack/src/` |
 
 ## Useful commands
 
 | Command | Purpose |
 |---|---|
-| `pnpm dev` | Run the API and the web app together |
-| `mysql -u root -p < database.sql` | Create or initialize the local MySQL database |
-| `pnpm db:push` | Apply Drizzle schema changes to the MySQL database |
-| `pnpm db:seed` | Load or reset the demo data |
-| `pnpm typecheck` | Typecheck every package |
-| `pnpm --filter @workspace/api-spec run codegen` | Regenerate the API client and validators after editing `openapi.yaml` |
+| `pnpm dev` | Run API and web app together |
+| `pnpm db:push` | Apply Drizzle schema to PostgreSQL |
+| `pnpm db:seed` | Load/reset fictional demo data |
+| `pnpm typecheck` | Typecheck workspace packages |
+| `pnpm test` | Run the automated tests |
+| `pnpm build` | Typecheck, run tests, and build workspace packages |
+| `pnpm start` | Start the production API/static app server |
+| `pnpm --filter @workspace/api-spec run codegen` | Regenerate API clients/validators after an OpenAPI change |
+
+## Requirements traceability
+
+Statuses indicate implementation evidence in this repository; “Partial” means the full requirement or its deployment/evidence claim is not yet verified.
+
+| ID | Paper requirement | Status | Where / evidence and remaining gap |
+|---|---|---|---|
+| FR1 | Users securely create and manage accounts according to role | Done (already existed) | Session authentication, account management, role-specific UI, and API authorization. |
+| FR2 | Patients manage personal information, medical history, symptoms and laboratory results | Partial | Profiles, symptoms, labs, and dated medical-history API exist; end-to-end patient UI coverage needs verification. |
+| FR3 | Doctors manage patient records and prescribed medications | Done (already existed) | Patient/medication routes, assignment/coverage checks, and clinical API. |
+| FR4 | Doctors create and manage medication schedules | Done (already existed) | Medication schedules generate dose events; course and schedule UI is present. |
+| FR5 | Automated and offline medication reminders based on schedule | Done (added by us) | Server reminders and missed-dose jobs plus PWA local reminders; closed-app delivery remains browser/OS-dependent. |
+| FR6 | Record medication intake; identify missed or delayed doses | Done (already existed) | Time-stamped dose logging, auto-missed processing, adherence and course views. |
+| FR7 | Patients record health metrics and health observations | Done (added by us) | Health/symptom routes, configurable ranges, seed data, and supported caregiver recording. |
+| FR8 | Analyze adherence and health data using the Random Forest Classifier | Done (added by us) | 15-feature model includes recent health signals; clinical validation is not claimed. |
+| FR9 | Generate patient risk predictions and adherence insights | Done (added by us) | Risk prediction, confidence, risk factors, and insight UI/API. |
+| FR10 | AI-assisted patient care recommendations from analyzed data | Done (already existed) | Optional Claude insights and rule-based recommendations; AI remains decision support. |
+| FR11 | AI chatbot for medication help and common health inquiries | Done (added by us) | Groq-backed, guarded chatbot with verified-data and built-in fallback. |
+| FR12 | Secure doctor-patient messaging with chat history | Done (added by us) | Encrypted message storage, authenticated SSE updates, and polling fallback. |
+| FR13 | Caregivers receive patient adherence and health alerts | Done (already existed) | Linked-caregiver notifications and patient-access checks; caregiver messaging stays read-only. |
+| FR14 | Doctor dashboard: records, adherence, health metrics, AI insights | Done (added by us) | Doctor patient pages, analytics, health data, and risk/insight views. |
+| FR15 | Data-driven adherence and health reports for doctor review | Done (added by us) | PDF/CSV exports include dose, health, and available AI evidence with CSV formula protection. |
+| NFR1 | User-friendly, responsive interface for mobile and web users | Partial | Responsive PWA exists; full 360/390/430 px page checks and screenshot evidence are not recorded here. |
+| NFR2 | Secure authentication, access control, encryption | Done (added by us) | Rate limits, consent gate, role/patient checks, secure sessions, encrypted content; deployment review remains necessary. |
+| NFR3 | HTTPS between components and cloud services | Partial | Production is HTTPS-ready, but actual TLS configuration depends on deployment/hosting and must be checked there. |
+| NFR4 | Role-based access for patients, doctors, caregivers, admins | Done (already existed) | API and UI access rules for all four product roles. |
+| NFR5 | Reliable offline medication reminders without internet | Partial | Cached schedule, local reminders and in-app alarm work where supported; browser/OS cannot guarantee closed-app alarms. |
+| NFR6 | Sync locally recorded data to the cloud when back online | Done (added by us) | Offline dose queue syncs with original confirmation timestamps; follow the manual evidence steps. |
+| NFR7 | Doctor-patient messages in near real time | Done (added by us) | Authenticated SSE with polling fallback; caregiver send remains forbidden. |
+| NFR8 | Chatbot responds only to medication, health-info, system questions | Done (already existed) | Topic/safety guards, fixed refusals, verified-data answers, and output filtering. |
+| NFR9 | AI prediction results in under 10 seconds | Partial | Performance benchmark on larger generated data is not recorded; do not claim a verified threshold yet. |
+| NFR10 | Data integrity; prevent unauthorized modification or deletion | Partial | Soft delete and before/after history exist for implemented routes, but policy/history coverage is not universal. |
+| NFR11 | Logs of important user activities and system transactions | Done (already existed) | Audit log records important account, clinical, messaging, AI, and report actions. |
+| NFR12 | At least 95% availability for cloud services | Partial | Availability depends on Supabase and application hosting; this repository cannot certify uptime or recovery targets. |
+
+## Known limitations
+
+- This is a responsive installable PWA, not a verified native Android APK. Patients and caregivers are blocked from desktop sign-in. Demonstrate on a physical phone, Android emulator, or browser device emulation; do not bypass the production policy.
+- Local reminders and offline sync depend on browser support and permissions. Closed-app alarm delivery is not guaranteed by the PWA.
+- Reminder escalation settings have database defaults, but the staged repeat/caregiver/doctor escalation is not implemented end to end.
+- Medical-history, consultation, prescription, and record-history API/schema work exists, but UI integration and consistent history/soft-delete behavior across every clinical entity still need verification.
+- Mobile usability evidence at every target width and a larger-data Random Forest performance benchmark have not been recorded.
+- The Random Forest uses demonstration data and is not clinically validated. Confidence is the highest class probability, not calibrated clinical certainty.
+- Claude/Groq content is decision support only. A licensed clinician must review real clinical content and recommendations.
+- Caregivers can read messages but cannot send them. Two-way caregiver messaging is not supported.
+- OTP/SMS delivery requires configured providers and valid recipient contact details. Availability, HTTPS, backups, and recovery depend on deployment infrastructure.
+
+## Alignment verification and remaining work
+
+The requirement-by-requirement status, evidence checklist, planning notes, and capstone paper corrections are maintained in [docs/ALIGNMENT.md](docs/ALIGNMENT.md).

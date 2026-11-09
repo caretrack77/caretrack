@@ -52,11 +52,10 @@ Thumbs.db
 
 .cache/
 .local/
+groq_api_keys.txt
+*groq*keys*.txt
 
 # environment
 .env
 .env.*
 !.env.example
-
-node_modules/
-.env

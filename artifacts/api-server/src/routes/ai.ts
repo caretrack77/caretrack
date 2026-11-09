@@ -45,6 +45,7 @@ function serializePrediction(p: typeof riskPredictionsTable.$inferSelect, patien
     probLow: p.probLow,
     probModerate: p.probModerate,
     probHigh: p.probHigh,
+    confidence: Math.max(p.probLow, p.probModerate, p.probHigh),
     factors: p.factors as RiskFactor[],
     createdAt: p.createdAt.toISOString(),
   };

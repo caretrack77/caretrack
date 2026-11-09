@@ -16,6 +16,8 @@ export interface RiskPrediction {
   probLow: number;
   probModerate: number;
   probHigh: number;
+  /** Maximum predicted class probability. */
+  confidence: number;
   factors: RiskFactor[];
   createdAt: string;
 }

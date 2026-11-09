@@ -80,6 +80,24 @@ export async function canManagePatient(
       .limit(1);
     return Boolean(patient);
   }
+  if (user.role === "patient") {
+    const [patient] = await db
+      .select({ id: patientsTable.id })
+      .from(patientsTable)
+      .where(and(eq(patientsTable.id, patientId), eq(patientsTable.userId, user.id)));
+    return Boolean(patient);
+  }
+  if (user.role === "caregiver") {
+    const [assignment] = await db
+      .select({ id: patientCaregiverAssignmentsTable.id })
+      .from(patientCaregiverAssignmentsTable)
+      .where(and(
+        eq(patientCaregiverAssignmentsTable.patientId, patientId),
+        eq(patientCaregiverAssignmentsTable.caregiverId, user.id),
+      ))
+      .limit(1);
+    return Boolean(assignment);
+  }
   if (user.role !== "provider") return false;
   const providerIds = [user.id, ...(await coveredProviderIds(user.id))];
   const [assignment] = await db

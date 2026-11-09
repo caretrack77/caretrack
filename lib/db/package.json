@@ -13,12 +13,13 @@
   },
   "dependencies": {
     "drizzle-orm": "catalog:",
-    "mysql2": "^3.15.3",
     "drizzle-zod": "^0.8.3",
+    "pg": "^8.23.1",
     "zod": "catalog:"
   },
   "devDependencies": {
     "@types/node": "catalog:",
+    "@types/pg": "^8.23.1",
     "drizzle-kit": "^0.31.11"
   }
 }

@@ -46,6 +46,10 @@ router.get("/doses", async (req, res): Promise<void> => {
     typeof dateValue === "string"
       ? dateValue
       : dateValue.toISOString().slice(0, 10);
+  if (date < manilaDate()) {
+    res.status(400).json({ error: "Past dose dates cannot be selected or changed." });
+    return;
+  }
   const patientIds =
     query.data.patientId === undefined ? visibleIds : [query.data.patientId];
   if (patientIds.length === 0) {
@@ -92,10 +96,6 @@ router.patch("/doses/:id/status", async (req, res): Promise<void> => {
     return;
   }
   const user = currentUser(res)!;
-  if (user.role === "caregiver") {
-    res.status(403).json({ error: "Caregiver accounts have read-only access." });
-    return;
-  }
   const [existing] = await db
     .select()
     .from(doseLogsTable)
@@ -130,7 +130,7 @@ router.patch("/doses/:id/status", async (req, res): Promise<void> => {
     }
   }
   const roleName = { patient: "patient", caregiver: "caregiver", provider: "doctor", admin: "admin" }[user.role] ?? user.role;
-  await db
+  const [dose] = await db
     .update(doseLogsTable)
     .set({
       status: parsed.data.status,
@@ -143,8 +143,7 @@ router.patch("/doses/:id/status", async (req, res): Promise<void> => {
           : null),
     })
     .where(eq(doseLogsTable.id, existing.id))
-    ;
-  const [dose] = await db.select().from(doseLogsTable).where(eq(doseLogsTable.id, existing.id)).limit(1);
+    .returning();
   const [medication] = await db
     .select({ name: medicationsTable.name, dosage: medicationsTable.dosage })
     .from(medicationsTable)
@@ -194,7 +193,7 @@ router.post(
       res.status(404).json({ error: "Active medication not found for this patient." });
       return;
     }
-    const inserted = await db
+    const [dose] = await db
       .insert(doseLogsTable)
       .values({
         patientId: medication.patientId,
@@ -202,8 +201,7 @@ router.post(
         scheduledTime: new Date(),
         status: "scheduled",
       })
-      ;
-    const [dose] = await db.select().from(doseLogsTable).where(eq(doseLogsTable.id, Number(inserted[0].insertId))).limit(1);
+      .returning();
     await writeAuditLog(user.id, "demo_dose_created", "dose", dose.id, {
       patientId: medication.patientId,
       medicationId: medication.id,

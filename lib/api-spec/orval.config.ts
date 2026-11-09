@@ -28,7 +28,7 @@ export default defineConfig({
       mode: "split",
       baseUrl: "/api",
       clean: true,
-      prettier: true,
+      prettier: false,
       override: {
         query: {
           version: 5,
@@ -57,7 +57,7 @@ export default defineConfig({
       schemas: { path: "generated/types", type: "typescript" },
       mode: "split",
       clean: true,
-      prettier: true,
+      prettier: false,
       override: {
         zod: {
           // Orval resolves `auto` from lib/api-spec/package.json, which has no

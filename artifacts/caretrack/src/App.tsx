@@ -15,15 +15,20 @@ import {
   useGenerateReport, useGetAnalytics, useGetCurrentUser, useGetPatient, useListAuditLogs,
   useListDoses, useListMedications, useListNotifications, useListPatientInsights, useListPatients,
   useListReportSchedules, useListReports, useListUsers, useLogin, useLogout, useMarkNotificationRead, useSimulateOverdueDoses,
-  useUpdateDoseStatus, useUpdateMedication, useSendLoginOtp, useVerifyLoginOtp, useChangePassword, getGetCurrentUserQueryKey, useGetRiskModel, getGetRiskModelQueryKey, useTrainRiskModel, useListRiskPredictions, getListRiskPredictionsQueryKey, useGetPatientRisk, getGetPatientRiskQueryKey, useListLabResults, getListLabResultsQueryKey, useUploadLabResult, useReviewLabResult, useListAppointments, getListAppointmentsQueryKey, useCreateAppointment, useUpdateAppointment, useAskAssistant, updateDoseStatus, useCreatePatientAccount, useGetDeliveryStatus, useSendDeliveryTest, useListCoverage, getListCoverageQueryKey, useCreateCoverage, useEndCoverage, useListProviders, useGetMedicationProgress, getGetMedicationProgressQueryKey, useListMessageThreads, getListMessageThreadsQueryKey, useListPatientMessages, getListPatientMessagesQueryKey, useSendPatientMessage, useMarkPatientMessagesRead, useUpdatePatient, useUpdateReportSchedule, useUpdateUser,
+  useUpdateDoseStatus, useUpdateMedication, useSendLoginOtp, useVerifyLoginOtp, useChangePassword, getGetCurrentUserQueryKey, useGetRiskModel, getGetRiskModelQueryKey, useTrainRiskModel, useListRiskPredictions, getListRiskPredictionsQueryKey, useGetPatientRisk, getGetPatientRiskQueryKey, useListLabResults, getListLabResultsQueryKey, useUploadLabResult, useReviewLabResult, useListAppointments, getListAppointmentsQueryKey, useCreateAppointment, useUpdateAppointment, useAskAssistant, updateDoseStatus, useCreatePatientAccount, useGetDeliveryStatus, useSendDeliveryTest, useListCoverage, getListCoverageQueryKey, useCreateCoverage, useEndCoverage, useListProviders, useGetMedicationProgress, getGetMedicationProgressQueryKey, useListMessageThreads, getListMessageThreadsQueryKey, useListPatientMessages, getListPatientMessagesQueryKey, useSendPatientMessage, useMarkPatientMessagesRead,   useUpdatePatient, useUpdateReportSchedule, useUpdateUser, useListHealthMetrics, useCreateHealthMetric, useListHealthLogs, useCreateHealthLog, getListHealthMetricsQueryKey, getListHealthLogsQueryKey,
 } from '@workspace/api-client-react';
-import type { Analytics, Appointment, AuditLog, AuthUser, Coverage, LoginChallenge, OtpSendResult, Dose, Medication, Notification, Patient, Report, ReportSchedule, User } from '@workspace/api-client-react';
+import type { Analytics, Appointment, AuditLog, AuthUser, Coverage, LoginChallenge, OtpSendResult, Dose, Medication, Notification, Patient, Report, ReportSchedule, User, HealthMetric, HealthMetricInputMetricType, HealthLog } from '@workspace/api-client-react';
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import './index.css';
 
 const client = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 15_000 } } });
 // Local calendar date (YYYY-MM-DD), not UTC, so "today" matches the user's clock.
 const dateToday = () => new Date().toLocaleDateString('en-CA');
+const dateTimeNow = () => {
+  const now = new Date();
+  const offset = now.getTimezoneOffset() * 60_000;
+  return new Date(now.getTime() - offset).toISOString().slice(0, 16);
+};
 const timeLabel = (value: string) => {
   const d = new Date(value);
   return Number.isNaN(d.getTime()) ? value : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
@@ -145,11 +150,13 @@ function AuthenticatedApp() {
   const user = me.data as AuthUser | undefined;
   const threads = useListMessageThreads({ query: { enabled: !!user && !user.mustChangePassword, queryKey: getListMessageThreadsQueryKey(), refetchInterval: 10_000 } });
   const unreadMessages = (threads.data || []).reduce((n, t) => n + t.unreadCount, 0);
+  useRealtimeEvents(Boolean(user && !user.mustChangePassword));
   const logout = useLogout();
   const [mobileNav,setMobileNav]=useState(false);
   if (me.isLoading) return <LoadingScreen/>;
   if (me.isError || !user) return <LoginRedirect/>;
   if (user.mustChangePassword) return <FirstLoginPasswordScreen user={user} onSignOut={()=>logout.mutate(undefined,{onSuccess:()=>{client.clear();clearOfflineData();setLocation('/login')}})}/>;
+  if (!user.privacyConsentAccepted) return <PrivacyConsentScreen user={user} onSignOut={()=>logout.mutate(undefined,{onSuccess:()=>{client.clear();clearOfflineData();setLocation('/login')}})}/>;
   const pathTitle = currentPath;
   const home = homeFor(user.role);
   if (pathTitle === '/' || (pathTitle === '/dashboard' && home !== '/dashboard')) return <Redirect to={home}/>;
@@ -196,6 +203,26 @@ function AuthenticatedApp() {
       {(user.role==='patient'||user.role==='caregiver')&&<AssistantWidget/>}
     </div>
   </div>;
+}
+
+/** SSE is the primary live update channel; existing React Query polling remains a fallback. */
+function useRealtimeEvents(enabled: boolean) {
+  const qc = useQueryClient();
+  useEffect(() => {
+    if (!enabled || typeof EventSource === 'undefined') return;
+    const source = new EventSource('/api/events');
+    const refresh = (event: Event) => {
+      let data: {patientId?:number} = {};
+      try { data = (event as MessageEvent<string>).data ? JSON.parse((event as MessageEvent<string>).data) : {}; } catch { /* non-message SSE keepalive */ }
+      qc.invalidateQueries({ queryKey: getListMessageThreadsQueryKey() });
+      qc.invalidateQueries({ queryKey: getListNotificationsQueryKey() });
+      if (data.patientId) qc.invalidateQueries({ queryKey: getListPatientMessagesQueryKey(data.patientId) });
+    };
+    source.addEventListener('message', refresh);
+    source.addEventListener('notification', refresh);
+    source.onerror = () => { source.close(); };
+    return () => source.close();
+  }, [enabled, qc]);
 }
 
 function LoginRedirect(){const [,setLocation]=useLocation();setLocation('/login');return <LoadingScreen/>}
@@ -303,8 +330,21 @@ function TodayPage({user}:{user:AuthUser}){
   const [filter,setFilter]=useState('all');
   const shown=filtered.filter(d=>filter==='all'||d.status===filter);
   const counts={all:filtered.length,scheduled:filtered.filter(d=>d.status==='scheduled').length,taken:filtered.filter(d=>d.status==='taken').length};
+  useEffect(() => {
+    if (!doses.data) return;
+    navigator.serviceWorker?.ready.then((registration) => registration.active?.postMessage({ type: 'cache-dose-schedule', doses: doses.data }));
+  }, [doses.data]);
+  useEffect(() => {
+    const alarm = () => {
+      const due = (doses.data || []).find((dose) => dose.status === 'scheduled' && Math.abs(new Date(dose.scheduledTime).getTime() - Date.now()) < 30_000);
+      if (due) playChime();
+    };
+    const timer = window.setInterval(alarm, 30_000);
+    alarm();
+    return () => window.clearInterval(timer);
+  }, [doses.data]);
   return <div className="page-enter">
-    <PageHeading eyebrow="Daily routine" title="Today’s doses" description="A clear, reassuring view of what’s planned and what’s already been logged." action={<label className="flex h-10 items-center gap-2 rounded-xl border border-[#dbe7e7] bg-white px-3 text-sm text-[#58747d]"><CalendarDays size={16}/><input data-testid="input-dose-date" type="date" value={selectedDate} onChange={e=>setSelectedDate(e.target.value)} className="w-[125px] bg-transparent text-xs outline-none"/></label>}/>
+    <PageHeading eyebrow="Daily routine" title="Today’s doses" description="A clear, reassuring view of what’s planned and what’s already been logged." action={<label className="flex h-10 items-center gap-2 rounded-xl border border-[#dbe7e7] bg-white px-3 text-sm text-[#58747d]"><CalendarDays size={16}/><input data-testid="input-dose-date" type="date" min={dateToday()} value={selectedDate} onChange={e=>{if(e.target.value>=dateToday())setSelectedDate(e.target.value)}} className="w-[125px] bg-transparent text-xs outline-none"/></label>}/>
     {(user.role==='patient'||user.role==='caregiver')&&<PatientAdherenceStats patientId={(patients.data||[])[0]?.id}/>}
     {(user.role==='patient'||user.role==='caregiver')&&(patients.data||[])[0]&&<MyCarePlan patientId={(patients.data||[])[0].id}/>}
     {(user.role==='patient'||user.role==='caregiver')&&(patients.data||[])[0]&&<div className="mb-5"><MedicationProgressPanel patientId={(patients.data||[])[0].id} canAdd={false} patientFacing={user.role==='patient'}/></div>}
@@ -316,6 +356,7 @@ function TodayPage({user}:{user:AuthUser}){
     {(user.role==='patient'||user.role==='caregiver')&&(patients.data||[])[0]&&<div className="mt-5"><LabResultsPanel patientId={(patients.data||[])[0].id} canUpload={user.role==='patient'} canReview={false}/></div>}
     {user.role==='patient'&&<div className="mt-5"><PatientInsightPanel patient={(patients.data||[]).find(p=>p.userId===user.id)} patientFacing canGenerate/></div>}
     <div className="mt-5 rounded-2xl border border-[#dceae8] bg-[#eef7f5] p-4 text-xs leading-5 text-[#668783]"><span className="font-semibold text-[#386c69]">Need help with a dose?</span> It’s okay if a dose was missed or your routine changed. Log what happened and contact your care team if you have questions.{user.role==='patient'&&<Link href="/messages" data-testid="link-message-doctor" className="mt-3 flex w-fit items-center gap-2 rounded-xl bg-[#17647a] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#125366]"><MessageSquare size={16}/> Message my doctor</Link>}</div>
+    <p className="mt-4 text-center text-[11px] leading-5 text-[#839a9e]">Closed-app dose alarms depend on your browser, phone settings and whether this page is installed as an app.</p>
   </div>;
 }
 
@@ -495,7 +536,43 @@ function FirstLoginPasswordScreen({user,onSignOut}:{user:AuthUser;onSignOut:()=>
   </div></div>;
 }
 
-function AccountPage({user}:{user:AuthUser}){
+function PrivacyConsentScreen({user,onSignOut}:{user:AuthUser;onSignOut:()=>void}) {
+  const qc = useQueryClient();
+  const [accepting,setAccepting] = useState(false);
+  const [error,setError] = useState("");
+  const accept = async () => {
+    setAccepting(true);
+    setError("");
+    try {
+      const response = await fetch("/api/auth/privacy-consent", {
+        method: "POST",
+        credentials: "include",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ version: "2026-11" }),
+      });
+      if (!response.ok) throw new Error((await response.json()).error || "Could not save consent.");
+      await qc.invalidateQueries({ queryKey: getGetCurrentUserQueryKey() });
+    } catch (e) {
+      setError(e instanceof Error ? e.message : "Could not save consent.");
+      setAccepting(false);
+    }
+  };
+  return <div className="grid min-h-[100dvh] place-items-center bg-[#eef6f7] px-5 py-10">
+    <div className="w-full max-w-[520px] rounded-3xl border border-[#dce9e9] bg-white p-6 shadow-[0_20px_50px_rgba(31,74,88,.08)] sm:p-8">
+      <div className="flex items-start gap-3"><div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#dff4f0] text-[#177b7c]"><ShieldCheck size={22}/></div><div><h1 className="text-xl font-bold text-[#173d4a]">Privacy notice</h1><p className="mt-1 text-sm text-muted-foreground">Before using CareTrack, please review how your account is protected.</p></div></div>
+      <div className="mt-5 space-y-3 rounded-2xl bg-[#f4f9f8] p-4 text-sm leading-6 text-[#536f76]">
+        <p>CareTrack stores account details, care records, messages, medication schedules, and health information needed to provide your care services.</p>
+        <p>Access is limited by your role and assigned care relationships. Authorized staff may audit activity. Sensitive health files and messages are encrypted at rest.</p>
+        <p>I understand that AI features only receive the limited, de-identified information described in CareTrack’s data processing controls. I consent to CareTrack processing my information for these care and safety features.</p>
+      </div>
+      {error && <p role="alert" className="mt-4 rounded-xl bg-red-50 p-3 text-xs text-red-800">{error}</p>}
+      <button data-testid="button-accept-privacy" disabled={accepting} onClick={accept} className="mt-5 h-12 w-full rounded-xl bg-[#17647a] text-sm font-semibold text-white disabled:opacity-60">{accepting ? "Saving…" : "I accept the privacy notice"}</button>
+      <button data-testid="button-privacy-signout" onClick={onSignOut} className="mx-auto mt-4 flex items-center gap-1.5 text-xs font-semibold text-[#47737b]"><LogOut size={14}/> Sign out</button>
+    </div>
+  </div>;
+}
+
+function AccountPage({user}:{user:AuthUser}) {
   return <div className="page-enter"><PageHeading eyebrow="Security" title="My account" description="Review your sign-in details and change your password."/>
     <div className="grid gap-5 lg:grid-cols-[.8fr_1.2fr]">
       <Card className="p-5 sm:p-6"><div className="flex items-center gap-3"><Avatar name={user.name}/><div className="min-w-0"><div className="truncate font-bold text-[#254954]">{user.name}</div><div className="truncate text-xs text-[#81969b]">{user.email}</div></div></div><div className="mt-5 grid grid-cols-2 gap-3"><Info label="Role" value={roleLabel(user.role)}/><Info label="Status" value={user.active?'Active':'Inactive'}/></div><div className="mt-5 rounded-xl bg-[#f4f9f8] p-3 text-xs leading-5 text-[#5f7d83]"><b className="text-[#37685f]">Sign-in protection:</b> each login asks for your password and a one-time code sent to your Gmail or phone.</div></Card>
@@ -503,7 +580,7 @@ function AccountPage({user}:{user:AuthUser}){
     </div>
   </div>;
 }
-const roleLabel=(role:string)=>({admin:'Administrator',provider:'Doctor / Nurse',patient:'Patient',caregiver:'Caregiver'} as Record<string,string>)[role]||role;
+const roleLabel=(role:string)=>({admin:'Administrator',provider:'Doctor',patient:'Patient',caregiver:'Caregiver'} as Record<string,string>)[role]||role;
 /** Random temporary password: 10 characters with letters and digits, no look-alike characters. */
 /** Readable temporary password like "mint-4827-rosa": lowercase, no look-alike characters, easy to type on a phone. */
 function generateTempPassword(){const words=['mint','rosa','tala','luna','sky','sun','rain','leaf','bay','gold','jade','reef','pine','wave','star','moon','dawn','mango','kiwi','palm'];const rand=(n:number)=>crypto.getRandomValues(new Uint32Array(1))[0]%n;const digits=Array.from({length:4},()=>'23456789'[rand(8)]).join('');return `${words[rand(words.length)]}-${digits}-${words[rand(words.length)]}`}
@@ -539,7 +616,7 @@ function CoveragePage({user}:{user:AuthUser}){
           <div className="grid gap-3 sm:grid-cols-2">
             <label className="text-[11px] font-semibold text-[#6c858b]">Absent doctor<select data-testid="select-absent-doctor" required value={absent} onChange={e=>setAbsent(e.target.value)} disabled={!isAdmin} className={field}><option value="" disabled>Select doctor</option>{doctors.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
             <label className="text-[11px] font-semibold text-[#6c858b]">Covering doctor<select data-testid="select-covering-doctor" required value={covering} onChange={e=>setCovering(e.target.value)} className={field}><option value="" disabled>Select doctor</option>{doctors.filter(d=>String(d.id)!==absent).map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
-            <label className="text-[11px] font-semibold text-[#6c858b]">From<input data-testid="input-coverage-start" type="date" required value={start} onChange={e=>setStart(e.target.value)} className={field}/></label>
+            <label className="text-[11px] font-semibold text-[#6c858b]">From<input data-testid="input-coverage-start" type="date" min={dateToday()} required value={start} onChange={e=>{if(e.target.value>=dateToday())setStart(e.target.value)}} className={field}/></label>
             <label className="text-[11px] font-semibold text-[#6c858b]">Until (leave blank if unknown)<input data-testid="input-coverage-end" type="date" min={start} value={end} onChange={e=>setEnd(e.target.value)} className={field}/></label>
           </div>
           <label className="block text-[11px] font-semibold text-[#6c858b]">Reason (optional)<input data-testid="input-coverage-reason" value={reason} maxLength={200} onChange={e=>setReason(e.target.value)} placeholder="e.g. Sick leave, conference" className={field}/></label>
@@ -698,6 +775,7 @@ function AiRiskCard({patientId}:{patientId:number}){
   return <Card testId="card-ai-risk" className="overflow-hidden"><div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><div><div className="flex items-center gap-2 text-[10px] font-bold uppercase tracking-[.15em] text-[#458d89]"><Activity size={13}/> AI risk prediction · Random Forest</div><h2 className="mt-1 font-bold text-[#254954]">Adherence risk, next 7 days</h2></div>{p&&<RiskLevelPill level={p.riskLevel} score={p.riskScore}/>}</div>
     {risk.isLoading?<ListSkeleton/>:!p?<EmptyState title="No prediction yet" body="This patient needs about 5 logged doses in the last 14 days before the model can predict." icon={Activity}/>:<div className="grid gap-5 p-5 sm:p-6 lg:grid-cols-2">
       <div><div className="text-[10px] font-bold uppercase tracking-wider text-[#7c9699]">Probability</div>{([['low',p.probLow],['moderate',p.probModerate],['high',p.probHigh]] as const).map(([k,v])=><div key={k} className="mt-2"><div className="mb-1 flex justify-between text-xs"><span className="capitalize text-[#4c6b73]">{k}</span><span className="font-semibold text-[#31535e]">{Math.round(v*100)}%</span></div><div className="h-2 overflow-hidden rounded-full bg-[#edf3f2]"><div className="h-full rounded-full" style={{width:`${v*100}%`,background:RISK_COLORS[k]}}/></div></div>)}
+        <div className="mt-3 rounded-lg bg-[#edf6f5] px-3 py-2 text-xs font-semibold text-[#397d7e]">Prediction confidence: {Math.round(p.confidence*100)}%</div>
         {(risk.data?.history||[]).length>1&&<div className="mt-4"><div className="text-[10px] font-bold uppercase tracking-wider text-[#7c9699]">Risk score trend</div><div className="h-16"><ResponsiveContainer width="100%" height="100%"><LineChart data={risk.data!.history}><YAxis hide domain={[0,100]}/><Line type="monotone" dataKey="riskScore" stroke="#17647a" strokeWidth={2} dot={false}/></LineChart></ResponsiveContainer></div></div>}
       </div>
       <div><div className="text-[10px] font-bold uppercase tracking-wider text-[#7c9699]">Why (top factors)</div>{p.factors.length?<ul className="mt-2 space-y-2">{p.factors.map(f=><li key={f.feature} className="flex gap-2 text-xs leading-5 text-[#4c6b73]"><span className="mt-1.5 h-1.5 w-1.5 shrink-0 rounded-full bg-[#cf7865]"/>{f.text}</li>)}</ul>:<p className="mt-2 text-xs text-[#71888e]">No factor stands out. Adherence looks stable.</p>}
@@ -748,7 +826,7 @@ function AppointmentsPanel({user,patientId}:{user:AuthUser;patientId?:number}){
   const submit=(e:FormEvent)=>{e.preventDefault();setError('');create.mutate({data:{patientId:Number(pid),scheduledAt:new Date(when).toISOString(),reason}},{onSuccess:()=>{setWhen('');setReason('');refresh()},onError:err=>setError(apiError(err,'Could not schedule.'))})};
   const row=(a:Appointment)=><div key={a.id} data-testid={`row-appointment-${a.id}`} className="flex flex-wrap items-center gap-3 px-5 py-3 sm:px-6"><div className="grid h-9 w-9 place-items-center rounded-lg bg-[#eef5fa] text-[#366a7d]"><CalendarDays size={16}/></div><div className="min-w-0 flex-1"><div className="text-sm font-semibold text-[#31535e]">{new Date(a.scheduledAt).toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}{!patientId&&<span className="font-normal text-[#81969b]"> · {a.patientName}</span>}</div><div className="truncate text-xs text-[#81969b]">{a.reason}{a.providerName?` · ${a.providerName}`:''}</div></div>{a.status!=='scheduled'?<StatusPill status={a.status==='completed'?'taken':'skipped'}/>:canManage&&<div className="flex gap-1.5"><button onClick={()=>update.mutate({id:a.id,data:{status:'completed'}},{onSuccess:refresh})} className="rounded-lg border border-[#dce8e8] px-2.5 py-1.5 text-[11px] font-semibold text-[#2f8a74] hover:bg-[#eef8f4]">Done</button><button onClick={()=>{if(window.confirm('Cancel this check-up?'))update.mutate({id:a.id,data:{status:'cancelled'}},{onSuccess:refresh})}} className="rounded-lg border border-[#dce8e8] px-2.5 py-1.5 text-[11px] font-semibold text-[#a75848] hover:bg-red-50">Cancel</button></div>}</div>;
   return <Card testId="panel-appointments"><div className="border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><h2 className="font-bold text-[#254954]">Follow-up check-ups</h2><p className="mt-1 text-xs text-[#81969b]">Reminders are sent a day before</p></div>
-    {canManage&&<form onSubmit={submit} className="grid gap-2 border-b border-[#eaf0f0] bg-[#f8fbfb] p-4 sm:grid-cols-[1fr_1fr_1.4fr_auto] sm:px-6">{!patientId&&<select data-testid="select-appointment-patient" required value={pid} onChange={e=>setPid(e.target.value)} className="h-9 rounded-lg border border-input bg-white px-2 text-xs"><option value="" disabled>Patient</option>{(patients.data||[]).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>}<input data-testid="input-appointment-when" type="datetime-local" required value={when} onChange={e=>setWhen(e.target.value)} className="h-9 rounded-lg border border-input bg-white px-2 text-xs"/><input data-testid="input-appointment-reason" required maxLength={200} value={reason} onChange={e=>setReason(e.target.value)} placeholder="Reason, e.g. BP follow-up" className={`h-9 rounded-lg border border-input bg-white px-2 text-xs ${patientId?'sm:col-span-2':''}`}/><button data-testid="button-create-appointment" disabled={create.isPending} className="h-9 rounded-lg bg-[#17647a] px-3 text-xs font-semibold text-white disabled:opacity-50">Schedule</button>{error&&<p className="text-xs text-red-700 sm:col-span-4">{error}</p>}</form>}
+    {canManage&&<form onSubmit={submit} className="grid gap-2 border-b border-[#eaf0f0] bg-[#f8fbfb] p-4 sm:grid-cols-[1fr_1fr_1.4fr_auto] sm:px-6">{!patientId&&<select data-testid="select-appointment-patient" required value={pid} onChange={e=>setPid(e.target.value)} className="h-9 rounded-lg border border-input bg-white px-2 text-xs"><option value="" disabled>Patient</option>{(patients.data||[]).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>}<input data-testid="input-appointment-when" type="datetime-local" min={dateTimeNow()} required value={when} onChange={e=>{if(e.target.value>=dateTimeNow())setWhen(e.target.value)}} className="h-9 rounded-lg border border-input bg-white px-2 text-xs"/><input data-testid="input-appointment-reason" required maxLength={200} value={reason} onChange={e=>setReason(e.target.value)} placeholder="Reason, e.g. BP follow-up" className={`h-9 rounded-lg border border-input bg-white px-2 text-xs ${patientId?'sm:col-span-2':''}`}/><button data-testid="button-create-appointment" disabled={create.isPending} className="h-9 rounded-lg bg-[#17647a] px-3 text-xs font-semibold text-white disabled:opacity-50">Schedule</button>{error&&<p className="text-xs text-red-700 sm:col-span-4">{error}</p>}</form>}
     {appts.isLoading?<ListSkeleton/>:list.length===0?<EmptyState title="No check-ups" body={canManage?'Schedule a follow-up above.':'Your doctor will schedule your next check-up here.'} icon={CalendarDays}/>:<div className="divide-y divide-[#edf2f2]">{upcoming.map(row)}{past.slice(-5).reverse().map(row)}</div>}
   </Card>;
 }
@@ -851,6 +929,7 @@ function PatientDetailPage({user}:{user:AuthUser}){
   return <div className="page-enter"><Link href="/patients" data-testid="link-back-patients" className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-[#47737b] hover:text-primary"><ArrowLeft size={16}/> Patient directory</Link>
     <div className="mb-6 flex flex-col gap-4 rounded-3xl bg-[#174b5b] p-5 text-white sm:flex-row sm:items-center sm:justify-between sm:p-7"><div className="flex items-center gap-4"><div className="grid h-14 w-14 place-items-center rounded-2xl bg-white/10 text-lg font-bold">{initials(patient.name)}</div><div><div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-extrabold tracking-tight" data-testid="text-patient-detail-name">{patient.name}</h1><span className="rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#a6e5d9]">{patient.active?'Active':'Inactive'}</span></div><p className="mt-1 text-sm text-white/60">{patient.age} years · {patient.sex.replace('_',' ')}{patient.phone?` · ${patient.phone}`:''}</p></div></div><div className="flex flex-wrap gap-2"><Link href={`/messages?patient=${patient.id}`} data-testid="button-message-patient" className="inline-flex h-10 items-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-[#174b5b] hover:bg-[#e8f4f2]"><MessageSquare size={16}/> Messages</Link>{(user.role==='admin'||user.role==='provider')&&<button data-testid="button-edit-patient-detail" onClick={()=>setEdit(true)} className="h-10 rounded-xl border border-white/20 px-4 text-sm font-semibold hover:bg-white/10">Edit profile</button>}</div></div>
     <div className="mb-5"><AiRiskCard patientId={patient.id}/></div>
+    <div className="mb-5"><HealthMetricsPanel patientId={patient.id} canRecord={user.role==='admin'||user.role==='provider'||user.role==='patient'||user.role==='caregiver'}/></div>
     <div className="mb-5"><MedicationProgressPanel patientId={patient.id} canAdd={user.role==='admin'||user.role==='provider'}/></div>
     <div className="mb-5 grid gap-5 xl:grid-cols-[1.1fr_.9fr]"><DigitalPrescription patientId={patient.id}/><LabResultsPanel patientId={patient.id} category="prescription" canUpload={user.role==='admin'||user.role==='provider'} canReview={false}/></div>
     <div className="mb-5 grid gap-5 xl:grid-cols-2"><LabResultsPanel patientId={patient.id} canUpload={user.role==='admin'||user.role==='provider'} canReview={user.role==='admin'||user.role==='provider'}/><AppointmentsPanel user={user} patientId={patient.id}/></div>
@@ -861,6 +940,47 @@ function PatientDetailPage({user}:{user:AuthUser}){
       <Card><div className="border-b border-[#eaf0f0] px-5 py-4"><h2 className="font-bold text-[#254954]">Recent doses</h2><p className="mt-1 text-xs text-[#81969b]">Recent activity from this patient’s schedule</p></div>{patient.recentDoses?.length?<div className="divide-y divide-[#edf2f2]">{patient.recentDoses.slice(0,10).map(d=><div key={d.id} data-testid={`row-patient-dose-${d.id}`} className="flex items-center gap-3 px-5 py-4"><div className={`grid h-9 w-9 place-items-center rounded-xl ${d.status==='taken'?'bg-[#e7f5ef] text-[#35896c]':'bg-[#eaf3f5] text-[#4a8494]'}`}><Pill size={16}/></div><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-[#31535e]">{d.medicationName}</div><div className="mt-1 text-xs text-[#81969b]">{timeLabel(d.scheduledTime)} · {d.dosage}</div></div><StatusPill status={d.status}/></div>)}</div>:<EmptyState title="No dose history yet" body="Logged doses will show here as this schedule gets underway."/>}</Card>
     </div>{edit&&<PatientModal patient={patient} onClose={()=>setEdit(false)}/>}
   </div>;
+}
+function HealthMetricsPanel({patientId,canRecord}:{patientId:number;canRecord:boolean}) {
+  const qc=useQueryClient();
+  const metrics=useListHealthMetrics(patientId,{query:{enabled:patientId>0}});
+  const logs=useListHealthLogs(patientId,{query:{enabled:patientId>0}});
+  const createMetric=useCreateHealthMetric();
+  const createLog=useCreateHealthLog();
+  const [metricType,setMetricType]=useState<HealthMetricInputMetricType>('blood_pressure');
+  const [value,setValue]=useState('');
+  const [secondary,setSecondary]=useState('');
+  const rows=(metrics.data||[]) as HealthMetric[];
+  const chartRows=[...rows].filter((row)=>row.metricType===metricType).reverse().slice(-14).map((row,index)=>({name:`${index+1}`,value:row.value}));
+  const units:Record<string,string>={blood_pressure:'mmHg',blood_sugar:'mg/dL',weight:'kg',heart_rate:'bpm',temperature:'°C'};
+  const submit=(event:FormEvent)=>{event.preventDefault();const parsed=Number(value);if(!Number.isFinite(parsed)||parsed<=0)return;
+    createMetric.mutate({patientId,data:{metricType,value:parsed,secondaryValue:metricType==='blood_pressure'&&secondary?Number(secondary):undefined,unit:units[metricType]}},{onSuccess:()=>{setValue('');setSecondary('');qc.invalidateQueries({queryKey:getListHealthMetricsQueryKey(patientId)});}});
+  };
+  return <Card><div className="grid gap-5 p-5 lg:grid-cols-[1fr_280px] lg:p-6">
+    <div><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-bold text-[#254954]">Health metrics</h2><p className="mt-1 text-xs text-[#81969b]">Home measurements and trend history</p></div>
+      <select value={metricType} onChange={(event)=>setMetricType(event.target.value as HealthMetricInputMetricType)} className="h-10 rounded-xl border border-[#dce7e7] bg-white px-3 text-sm">{[['blood_pressure','Blood pressure'],['blood_sugar','Blood sugar'],['weight','Weight'],['heart_rate','Heart rate'],['temperature','Temperature']].map(([key,label])=> <option key={key} value={key}>{label}</option>)}</select></div>
+      <div className="mt-4 h-52">{chartRows.length?<ResponsiveContainer width="100%" height="100%"><LineChart data={chartRows}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="name" tick={{fontSize:11}}/><YAxis tick={{fontSize:11}}/><Tooltip/><Line type="monotone" dataKey="value" stroke="#287d8e" strokeWidth={2.5} dot={{r:3}}/></LineChart></ResponsiveContainer>:<EmptyState title="No measurements yet" body="Recorded metrics will appear here."/>}</div>
+      <div className="mt-3 space-y-2">{rows.slice(0,4).map((row)=><div key={row.id} className={`flex items-center justify-between rounded-xl px-3 py-2 text-sm ${row.outOfRange?'bg-[#fff0ed] text-[#b14b3d]':'bg-[#f5f9f8] text-[#3d5e67]'}`}><span>{row.metricType.replaceAll('_',' ')}</span><strong>{row.value}{row.secondaryValue!=null?`/${row.secondaryValue}`:''} {row.unit}{row.outOfRange?' · Out of range':''}</strong></div>)}</div>
+    </div>
+    {canRecord&&<form onSubmit={submit} className="rounded-2xl bg-[#f6faf9] p-4">
+      <h3 className="text-sm font-bold text-[#31535e]">Record a reading</h3>
+      {metricType==='blood_pressure'?<div className="mt-3 grid grid-cols-2 gap-2"><input value={value} onChange={(event)=>setValue(event.target.value)} required inputMode="numeric" placeholder="Systolic" className="h-10 rounded-xl border border-[#dce7e7] px-3 text-sm"/><input value={secondary} onChange={(event)=>setSecondary(event.target.value)} required inputMode="numeric" placeholder="Diastolic" className="h-10 rounded-xl border border-[#dce7e7] px-3 text-sm"/></div>:<input value={value} onChange={(event)=>setValue(event.target.value)} required inputMode="decimal" placeholder={units[metricType]} className="mt-3 h-10 w-full rounded-xl border border-[#dce7e7] px-3 text-sm"/>}
+      <button type="submit" disabled={createMetric.isPending} className="mt-3 h-10 w-full rounded-xl bg-[#17647a] text-sm font-semibold text-white">{createMetric.isPending?'Saving...':'Save reading'}</button>
+      <button
+        type="button"
+        disabled={createLog.isPending}
+        onClick={()=>{
+          createLog.mutate(
+            {patientId,data:{symptoms:['fatigue']}},
+            {onSuccess:()=>qc.invalidateQueries({queryKey:getListHealthLogsQueryKey(patientId)})},
+          );
+        }}
+        className="mt-2 h-10 w-full rounded-xl border border-[#dce7e7] text-sm font-semibold text-[#47737b]"
+      >
+        Add fatigue note
+      </button>
+    </form>}
+  </div></Card>;
 }
 function Info({label,value}:{label:string;value:string}){return <div><div className="text-[10px] font-bold uppercase tracking-wider text-[#8ba0a4]">{label}</div><div data-testid={`text-patient-${label.toLowerCase().replaceAll(' ','-')}`} className="mt-1 text-sm font-medium leading-5 text-[#3d5e67]">{value}</div></div>}
 function MedicationMini({med}:{med:Medication}){return <div data-testid={`card-patient-medication-${med.id}`} className="flex items-center gap-3 rounded-xl bg-[#f5f9f8] p-3"><div className="grid h-9 w-9 place-items-center rounded-lg bg-[#e2f2ee] text-[#39847e]"><Pill size={17}/></div><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-[#355761]">{med.name}</div><div className="mt-0.5 text-xs text-[#80969b]">{med.dosage} · {med.scheduleTimes.join(', ')||med.frequency.replace('_',' ')}</div></div></div>}
@@ -904,7 +1024,7 @@ function MedicationModal({medication,patients,defaultPatientId,onClose}:{medicat
     <div className="grid gap-4 sm:grid-cols-2"><Field label="Form" name="form" defaultValue={medication?.form} placeholder="Tablet, capsule…"/><label className="block text-xs font-semibold text-[#526f77]">Frequency<select name="frequency" defaultValue={medication?.frequency||'daily'} className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal"><option value="daily">Daily</option><option value="specific_days">Specific days</option><option value="every_hours">Every few hours</option></select></label></div>
     <div className="grid gap-4 sm:grid-cols-2"><Field label="Scheduled times" name="scheduleTimes" defaultValue={medication?.scheduleTimes?.join(', ')||'08:00'} placeholder="08:00, 20:00"/><Field label="Times per day" name="timesPerDay" type="number" defaultValue={medication?.timesPerDay||1}/></div>
     <div className="grid gap-4 sm:grid-cols-2"><Field label="Days of week (0=Sun, comma separated)" name="days" defaultValue={medication?.daysOfWeek?.join(',')||''}/><Field label="Interval hours (if applicable)" name="intervalHours" type="number" defaultValue={medication?.intervalHours||''}/></div>
-    <div className="grid gap-4 sm:grid-cols-2"><Field label="Start date" name="startDate" type="date" defaultValue={medication?.startDate||dateToday()}/><Field label="End date (optional)" name="endDate" type="date" defaultValue={medication?.endDate||''}/></div>
+    <div className="grid gap-4 sm:grid-cols-2"><Field label="Start date" name="startDate" type="date" defaultValue={medication?.startDate||dateToday()} min={dateToday()}/><Field label="End date (optional)" name="endDate" type="date" defaultValue={medication?.endDate||''} min={dateToday()}/></div>
     {!medication&&<label className="block text-xs font-semibold text-[#526f77]">Course length<select name="courseDays" defaultValue="0" className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal"><option value="0">Ongoing, or use the end date above</option>{[3,5,7,10,14,21,30].map(d=><option key={d} value={d}>{d} days</option>)}</select><span className="mt-1 block font-normal text-[#8ba0a4]">A fixed course shows a day-by-day progress bar.</span></label>}
     <label className="block text-xs font-semibold text-[#526f77]">Instructions<textarea name="instructions" defaultValue={medication?.instructions||''} rows={2} className="mt-1.5 w-full rounded-lg border border-input bg-white px-3 py-2 text-sm font-normal outline-none focus:border-primary"/></label>
     {error&&<div role="alert" data-testid="status-medication-form-error" className="text-xs text-red-700">{error}</div>}<ModalActions onClose={onClose} busy={busy} submitLabel={medication?'Save schedule':'Create schedule'}/>
@@ -936,7 +1056,7 @@ function UserModal({user,defaultRole='provider',onClose}:{user:User|null;default
   };
   const busy=create.isPending||update.isPending;
   if(created)return <Modal title={created.reset?'Password reset':'Account created'} subtitle="Share these sign-in details privately." onClose={onClose}><div className="space-y-4" data-testid="panel-account-created"><div className="rounded-xl border border-[#cfe7df] bg-[#eef8f4] p-4 text-sm text-[#37796b]"><div className="font-semibold">{created.name}</div><div className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs"><span className="text-[#5d8f86]">Email</span><span className="font-mono">{created.email}</span><span className="text-[#5d8f86]">Temporary password</span><span className="font-mono font-bold" data-testid="text-temp-password">{created.password}</span></div></div><p className="text-xs leading-5 text-[#71888e]">At first sign-in they’ll verify a code sent to their Gmail or phone, then must replace this temporary password with their own.</p><div className="flex justify-end gap-2"><button type="button" onClick={()=>navigator.clipboard?.writeText(`Email: ${created.email}\nTemporary password: ${created.password}`)} className="h-10 rounded-lg border border-[#dce8e8] px-4 text-sm font-semibold text-[#52737c] hover:bg-[#f5f9f9]">Copy details</button><button type="button" data-testid="button-done-created" onClick={onClose} className="h-10 rounded-lg bg-[#17647a] px-4 text-sm font-semibold text-white hover:bg-[#125366]">Done</button></div></div></Modal>;
-  return <Modal title={user?'Edit team member':defaultRole==='provider'?'Add a doctor':'Add a user'} subtitle={user?'Update account details. Role access is controlled by the administrator.':'Create a demo login and choose the right workspace role.'} onClose={onClose}><form onSubmit={submit} className="space-y-4"><Field label="Full name" name="name" required defaultValue={user?.name}/><Field label="Email address" name="email" type="email" required defaultValue={user?.email}/><Field label="Mobile number (for SMS login codes)" name="phone" type="tel" defaultValue={user?.phone||''} placeholder="09XXXXXXXXX"/><div><div className="flex items-center justify-between"><span className="text-xs font-semibold text-[#526f77]">{user?'Reset password (leave blank to keep current)':'Temporary password'}</span><button type="button" data-testid="button-generate-password" onClick={()=>setTempPassword(generateTempPassword())} className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#287d80] hover:underline"><KeyRound size={12}/> Generate</button></div><PasswordInput testId="input-user-password" name="password" value={tempPassword} onChange={setTempPassword} required={!user} minLength={8} autoComplete="new-password" className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal outline-none focus:border-primary"/><p className="mt-1 text-[11px] text-[#8ba0a4]">They’ll be asked to create their own password the first time they sign in.</p></div>{!user&&<label className="block text-xs font-semibold text-[#526f77]">Role<select name="role" defaultValue={defaultRole} className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal"><option value="provider">Doctor / Nurse</option><option value="patient">Patient</option><option value="caregiver">Caregiver</option><option value="admin">Administrator</option></select></label>}{error&&<div data-testid="status-user-form-error" className="text-xs text-red-700">{error}</div>}<ModalActions onClose={onClose} busy={busy} submitLabel={user?'Save changes':'Create user'}/></form></Modal>;
+  return <Modal title={user?'Edit team member':defaultRole==='provider'?'Add a doctor':'Add a user'} subtitle={user?'Update account details. Role access is controlled by the administrator.':'Create a demo login and choose the right workspace role.'} onClose={onClose}><form onSubmit={submit} className="space-y-4"><Field label="Full name" name="name" required defaultValue={user?.name}/><Field label="Email address" name="email" type="email" required defaultValue={user?.email}/><Field label="Mobile number (for SMS login codes)" name="phone" type="tel" defaultValue={user?.phone||''} placeholder="09XXXXXXXXX"/><div><div className="flex items-center justify-between"><span className="text-xs font-semibold text-[#526f77]">{user?'Reset password (leave blank to keep current)':'Temporary password'}</span><button type="button" data-testid="button-generate-password" onClick={()=>setTempPassword(generateTempPassword())} className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#287d80] hover:underline"><KeyRound size={12}/> Generate</button></div><PasswordInput testId="input-user-password" name="password" value={tempPassword} onChange={setTempPassword} required={!user} minLength={8} autoComplete="new-password" className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal outline-none focus:border-primary"/><p className="mt-1 text-[11px] text-[#8ba0a4]">They’ll be asked to create their own password the first time they sign in.</p></div>{!user&&<label className="block text-xs font-semibold text-[#526f77]">Role<select name="role" defaultValue={defaultRole} className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal">  <option value="provider">Doctor</option><option value="patient">Patient</option><option value="caregiver">Caregiver</option><option value="admin">Administrator</option></select></label>}{error&&<div data-testid="status-user-form-error" className="text-xs text-red-700">{error}</div>}<ModalActions onClose={onClose} busy={busy} submitLabel={user?'Save changes':'Create user'}/></form></Modal>;
 }
 function AccessDenied(){return <Card className="p-8"><EmptyState title="This page isn’t part of your account" body="Your role decides which pages you can open. Use the menu to go to your pages." icon={ShieldCheck}/><div className="flex justify-center"><Link href="/" className="inline-flex h-10 items-center rounded-xl bg-[#17647a] px-4 text-sm font-semibold text-white">Go to my home page</Link></div></Card>}
 
@@ -1041,8 +1161,8 @@ function AuditRow({log}:{log:AuditLog}){
   return <div data-testid={`row-audit-log-${log.id}`} className="flex items-start gap-3 px-5 py-4 sm:px-6"><div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#edf4f4] text-[#64868a]"><Activity size={16}/></div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-bold text-[#355661]" data-testid={`text-audit-action-${log.id}`}>{log.action.replaceAll('_',' ')}</span><span className="rounded-full bg-[#f1f6f6] px-2 py-0.5 text-[10px] capitalize text-[#71898e]">{log.entityType}{log.entityId?` · #${log.entityId}`:''}</span></div><div className="mt-1 text-xs text-[#82979b]">{log.userName||'System'} · {new Date(log.createdAt).toLocaleString()}</div>{Object.keys(log.details||{}).length>0&&<details className="mt-2"><summary data-testid={`button-audit-details-${log.id}`} className="cursor-pointer text-[11px] font-semibold text-[#42817f]">View event details</summary><pre data-testid={`text-audit-details-${log.id}`} className="mt-2 max-w-full overflow-x-auto rounded-lg bg-[#f5f8f8] p-3 text-[10px] leading-4 text-[#60797f]">{JSON.stringify(log.details,null,2)}</pre></details>}</div></div>;
 }
 
-function Field({label,name,type='text',required=false,defaultValue,placeholder,minLength}:{label:string;name:string;type?:string;required?:boolean;defaultValue?:string|number;placeholder?:string;minLength?:number}){
-  return <label className="block text-xs font-semibold text-[#526f77]">{label}<input data-testid={`input-${name}`} name={name} type={type} required={required} minLength={minLength} defaultValue={defaultValue} placeholder={placeholder} className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal text-[#31515c] outline-none transition placeholder:text-[#a5b4b7] focus:border-primary focus:ring-2 focus:ring-primary/10"/></label>;
+function Field({label,name,type='text',required=false,defaultValue,placeholder,minLength,min}:{label:string;name:string;type?:string;required?:boolean;defaultValue?:string|number;placeholder?:string;minLength?:number;min?:string}){
+  return <label className="block text-xs font-semibold text-[#526f77]">{label}<input data-testid={`input-${name}`} name={name} type={type} required={required} minLength={minLength} min={min} defaultValue={defaultValue} placeholder={placeholder} className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal text-[#31515c] outline-none transition placeholder:text-[#a5b4b7] focus:border-primary focus:ring-2 focus:ring-primary/10"/></label>;
 }
 function Modal({title,subtitle,onClose,children}:{title:string;subtitle:string;onClose:()=>void;children:ReactNode}){
   return <div className="fixed inset-0 z-[60] flex items-end justify-center bg-[#153944]/45 p-0 backdrop-blur-[2px] sm:items-center sm:p-5" onMouseDown={e=>{if(e.target===e.currentTarget)onClose()}}><div role="dialog" aria-modal="true" className="max-h-[94dvh] w-full overflow-y-auto rounded-t-3xl bg-white p-5 shadow-2xl sm:max-w-[560px] sm:rounded-3xl sm:p-7 page-enter"><div className="mb-5 flex items-start justify-between"><div><h2 className="text-xl font-extrabold text-[#254954]" data-testid="heading-modal">{title}</h2><p className="mt-1 text-xs leading-5 text-[#81969b]">{subtitle}</p></div><button type="button" data-testid="button-close-modal" onClick={onClose} className="grid h-9 w-9 place-items-center rounded-xl text-[#6e858a] hover:bg-[#f0f6f6]"><X size={18}/></button></div>{children}</div></div>;

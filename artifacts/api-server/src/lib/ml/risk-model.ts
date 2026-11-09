@@ -2,6 +2,7 @@ import { and, desc, eq, inArray } from "drizzle-orm";
 import {
   db,
   doseLogsTable,
+  healthMetricsTable,
   medicationsTable,
   modelRunsTable,
   notificationsTable,
@@ -40,6 +41,9 @@ export const FEATURES = [
   { key: "activeMeds", label: "Active medications", unit: "", riskWhenHigh: true },
   { key: "age", label: "Age", unit: " yrs", riskWhenHigh: true },
   { key: "conditions", label: "Number of conditions", unit: "", riskWhenHigh: true },
+  { key: "healthOutOfRangeRate", label: "Health readings outside range", unit: "%", riskWhenHigh: true },
+  { key: "bloodPressureSystolic", label: "Latest systolic blood pressure", unit: " mmHg", riskWhenHigh: true },
+  { key: "bloodSugarLatest", label: "Latest blood sugar", unit: "", riskWhenHigh: true },
 ] as const;
 type FeatureKey = (typeof FEATURES)[number]["key"];
 
@@ -51,6 +55,14 @@ type Dose = {
   status: string;
 };
 type PatientInfo = { id: number; name: string; age: number; conditions: string[] };
+type HealthMetric = {
+  patientId: number;
+  metricType: string;
+  value: number;
+  secondaryValue: number | null;
+  outOfRange: boolean;
+  recordedAt: Date;
+};
 
 function manilaHour(date: Date): number {
   return Number(
@@ -63,7 +75,12 @@ function manilaHour(date: Date): number {
 const pct = (part: number, whole: number) => (whole === 0 ? 0 : Math.round((part / whole) * 100));
 
 /** The 12 model inputs for one patient at a reference time, from the 14 days before it. */
-function featuresAt(patient: PatientInfo, doses: Dose[], at: Date): Record<FeatureKey, number> | null {
+function featuresAt(
+  patient: PatientInfo,
+  doses: Dose[],
+  healthMetrics: HealthMetric[],
+  at: Date,
+): Record<FeatureKey, number> | null {
   const start = at.getTime() - WINDOW_DAYS * DAY;
   const mid = at.getTime() - 7 * DAY;
   const window = doses.filter(
@@ -76,6 +93,17 @@ function featuresAt(patient: PatientInfo, doses: Dose[], at: Date): Record<Featu
   const evening = window.filter((d) => manilaHour(d.scheduledTime) >= 17);
   const morning = window.filter((d) => manilaHour(d.scheduledTime) < 12);
   const takenList = window.filter((d) => d.status === "taken" && d.takenTime);
+  const healthWindow = healthMetrics.filter(
+    (metric) =>
+      metric.recordedAt.getTime() >= start &&
+      metric.recordedAt.getTime() < at.getTime(),
+  );
+  const latestMetric = (type: string) =>
+    [...healthWindow].filter((metric) => metric.metricType === type).sort(
+      (a, b) => b.recordedAt.getTime() - a.recordedAt.getTime(),
+    )[0];
+  const systolic = latestMetric("blood_pressure")?.value ?? 0;
+  const bloodSugar = latestMetric("blood_sugar")?.value ?? 0;
   let streak = 0;
   for (const d of [...window].sort((a, b) => b.scheduledTime.getTime() - a.scheduledTime.getTime())) {
     if (d.status === "taken") break;
@@ -98,6 +126,12 @@ function featuresAt(patient: PatientInfo, doses: Dose[], at: Date): Record<Featu
     activeMeds: new Set(window.map((d) => d.medicationId)).size,
     age: patient.age,
     conditions: patient.conditions.length,
+    healthOutOfRangeRate: pct(
+      healthWindow.filter((metric) => metric.outOfRange).length,
+      healthWindow.length,
+    ),
+    bloodPressureSystolic: systolic,
+    bloodSugarLatest: bloodSugar,
   };
 }
 
@@ -130,8 +164,23 @@ async function loadData() {
     .from(doseLogsTable)
     .innerJoin(medicationsTable, eq(medicationsTable.id, doseLogsTable.medicationId));
   const byPatient = new Map<number, Dose[]>();
+  const healthMetrics = await db
+    .select({
+      patientId: healthMetricsTable.patientId,
+      metricType: healthMetricsTable.metricType,
+      value: healthMetricsTable.value,
+      secondaryValue: healthMetricsTable.secondaryValue,
+      outOfRange: healthMetricsTable.outOfRange,
+      recordedAt: healthMetricsTable.recordedAt,
+    })
+    .from(healthMetricsTable)
+    .where(eq(healthMetricsTable.active, true));
+  const healthByPatient = new Map<number, HealthMetric[]>();
+  for (const metric of healthMetrics) {
+    healthByPatient.set(metric.patientId, [...(healthByPatient.get(metric.patientId) ?? []), metric]);
+  }
   for (const d of doses) byPatient.set(d.patientId, [...(byPatient.get(d.patientId) ?? []), d]);
-  return { patients, byPatient };
+  return { patients, byPatient, healthByPatient };
 }
 
 type Stats = { mean: number[]; std: number[]; direction: number[] };
@@ -177,6 +226,13 @@ function describe(key: FeatureKey, value: number, typical: number): string {
     case "activeMeds": return `Takes ${value} different medications, more than typical (${typical.toFixed(1)}).`;
     case "age": return `Age ${value}, older than the typical patient (${t}); may need more support.`;
     case "conditions": return `Manages ${value} health conditions (typical: ${typical.toFixed(1)}).`;
+    case "healthOutOfRangeRate": return `${value}% of recent health readings were outside the configured range (typical: ${t}%).`;
+    case "bloodPressureSystolic": return value > 0
+      ? `Latest systolic blood pressure is ${value} mmHg (typical: ${t} mmHg).`
+      : "No systolic blood pressure reading is available in the prediction window.";
+    case "bloodSugarLatest": return value > 0
+      ? `Latest blood sugar reading is ${value} (typical: ${typical.toFixed(1)}).`
+      : "No blood sugar reading is available in the prediction window.";
   }
 }
 
@@ -224,7 +280,7 @@ export type TrainResult = {
 
 /** Train a new forest on all patient history, then predict for every active patient. */
 export async function trainAndPredict(trainedBy: number | null = null): Promise<TrainResult> {
-  const { patients, byPatient } = await loadData();
+  const { patients, byPatient, healthByPatient } = await loadData();
   const now = Date.now();
   const samples: Sample[] = [];
   for (const patient of patients) {
@@ -233,7 +289,7 @@ export async function trainAndPredict(trainedBy: number | null = null): Promise<
     const first = Math.min(...doses.map((d) => d.scheduledTime.getTime()));
     // One training example per day: 14 days of history -> what happened in the following 7 days.
     for (let at = first + WINDOW_DAYS * DAY; at <= now - HORIZON_DAYS * DAY; at += DAY) {
-      const f = featuresAt(patient, doses, new Date(at));
+      const f = featuresAt(patient, doses, healthByPatient.get(patient.id) ?? [], new Date(at));
       const label = labelAt(doses, new Date(at));
       if (f && label !== null) samples.push({ features: vector(f), label });
     }
@@ -245,7 +301,7 @@ export async function trainAndPredict(trainedBy: number | null = null): Promise<
   }
 
   const forest = new RandomForest({ classes: 3, trees: 60, maxDepth: 6, minSamplesLeaf: 3, seed: 42 }).fit(samples);
-  const inserted = await db
+  const [run] = await db
     .insert(modelRunsTable)
     .values({
       algorithm: "Random Forest (CART, Gini impurity, bootstrap aggregation)",
@@ -261,13 +317,17 @@ export async function trainAndPredict(trainedBy: number | null = null): Promise<
       })).sort((a, b) => b.importance - a.importance),
       trainedBy,
     })
-    ;
-  const [run] = await db.select().from(modelRunsTable).where(eq(modelRunsTable.id, Number(inserted[0].insertId))).limit(1);
+    .returning();
 
   const stats = statsFor(samples);
   let predictions = 0;
   for (const patient of patients) {
-    const f = featuresAt(patient, byPatient.get(patient.id) ?? [], new Date(now));
+    const f = featuresAt(
+      patient,
+      byPatient.get(patient.id) ?? [],
+      healthByPatient.get(patient.id) ?? [],
+      new Date(now),
+    );
     if (!f) continue;
     const x = vector(f);
     const [low, moderate, high] = forest.predictProba(x);
@@ -333,7 +393,7 @@ export async function trainAndPredict(trainedBy: number | null = null): Promise<
 export async function latestPredictions(patientIds: number[]) {
   if (patientIds.length === 0) return [];
   const rows = await db
-    .select({
+    .selectDistinctOn([riskPredictionsTable.patientId], {
       prediction: riskPredictionsTable,
       name: patientsTable.name,
     })
@@ -341,9 +401,7 @@ export async function latestPredictions(patientIds: number[]) {
     .innerJoin(patientsTable, eq(patientsTable.id, riskPredictionsTable.patientId))
     .where(inArray(riskPredictionsTable.patientId, patientIds))
     .orderBy(riskPredictionsTable.patientId, desc(riskPredictionsTable.createdAt));
-  const latest = new Map<number, (typeof rows)[number]>();
-  for (const row of rows) if (!latest.has(row.prediction.patientId)) latest.set(row.prediction.patientId, row);
-  return [...latest.values()];
+  return rows;
 }
 
 export async function latestModelRun() {

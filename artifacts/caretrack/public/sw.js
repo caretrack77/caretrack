@@ -14,7 +14,47 @@ self.addEventListener("activate", (event) => event.waitUntil(self.clients.claim(
 self.addEventListener("message", (event) => {
   // Sent on sign-out so another user of the same device can't see cached data.
   if (event.data === "clear-cache") event.waitUntil(caches.delete(CACHE));
+  if (event.data?.type === "cache-dose-schedule") event.waitUntil(cacheDoseSchedule(event.data.doses));
 });
+
+const DB_NAME = "caretrack-offline";
+const DB_STORE = "reminders";
+function reminderDb() {
+  return new Promise((resolve, reject) => {
+    const request = indexedDB.open(DB_NAME, 1);
+    request.onupgradeneeded = () => request.result.createObjectStore(DB_STORE);
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => reject(request.error);
+  });
+}
+async function cacheDoseSchedule(doses) {
+  const db = await reminderDb();
+  await new Promise((resolve, reject) => {
+    const tx = db.transaction(DB_STORE, "readwrite");
+    tx.objectStore(DB_STORE).put(doses || [], "schedule");
+    tx.oncomplete = resolve; tx.onerror = () => reject(tx.error);
+  });
+  scheduleCachedReminders(doses || []);
+}
+const reminderTimers = new Map();
+function scheduleCachedReminders(doses) {
+  reminderTimers.forEach((timer) => clearTimeout(timer));
+  reminderTimers.clear();
+  for (const dose of doses) {
+    if (dose.status !== "scheduled") continue;
+    const delay = new Date(dose.scheduledTime).getTime() - Date.now();
+    if (delay < 0 || delay > 2 * 24 * 60 * 60 * 1000) continue;
+    const timer = setTimeout(async () => {
+      if (!("showNotification" in self.registration)) return;
+      await self.registration.showNotification(`CareTrack dose reminder: ${dose.medicationName}`, {
+        body: `${dose.dosage || "Dose"} is due now.`,
+        tag: `dose-${dose.id}`, icon: "/icon-192.png", badge: "/icon-192.png",
+        data: { url: "/today", doseId: dose.id },
+      });
+    }, Math.min(delay, 2147483647));
+    reminderTimers.set(dose.id, timer);
+  }
+}
 
 self.addEventListener("fetch", (event) => {
   const request = event.request;
@@ -43,4 +83,13 @@ self.addEventListener("fetch", (event) => {
         });
       }),
   );
+});
+
+self.addEventListener("notificationclick", (event) => {
+  event.notification.close();
+  const url = event.notification.data?.url || "/today";
+  event.waitUntil(self.clients.matchAll({ type: "window", includeUncontrolled: true }).then((clients) => {
+    const existing = clients.find((client) => "navigate" in client);
+    return existing ? existing.navigate(url) : self.clients.openWindow(url);
+  }));
 });

@@ -9,6 +9,63 @@ export interface HealthStatus {
   status: string;
 }
 
+export type HealthMetricInputMetricType = typeof HealthMetricInputMetricType[keyof typeof HealthMetricInputMetricType];
+
+
+export const HealthMetricInputMetricType = {
+  blood_pressure: 'blood_pressure',
+  blood_sugar: 'blood_sugar',
+  weight: 'weight',
+  heart_rate: 'heart_rate',
+  temperature: 'temperature',
+} as const;
+
+export interface HealthMetricInput {
+  metricType: HealthMetricInputMetricType;
+  value: number;
+  secondaryValue?: number;
+  unit: string;
+  recordedAt?: string;
+  note?: string;
+}
+
+export interface HealthMetric {
+  id: number;
+  patientId: number;
+  metricType: string;
+  value: number;
+  /** @nullable */
+  secondaryValue?: number | null;
+  unit: string;
+  recordedAt: string;
+  /** @nullable */
+  recordedBy?: number | null;
+  /** @nullable */
+  note?: string | null;
+  outOfRange: boolean;
+  active?: boolean;
+  createdAt?: string;
+}
+
+export interface HealthLogInput {
+  symptoms: string[];
+  notes?: string;
+  recordedAt?: string;
+}
+
+export interface HealthLog {
+  id: number;
+  patientId: number;
+  recordedAt: string;
+  symptoms: string[];
+  /** @nullable */
+  notes?: string | null;
+  /** @nullable */
+  recordedBy?: number | null;
+  active?: boolean;
+  createdAt?: string;
+}
+
 export interface LoginInput {
   email: string;
   /** @minLength 8 */
@@ -146,6 +203,8 @@ export interface RiskPrediction {
   probLow: number;
   probModerate: number;
   probHigh: number;
+  /** Maximum predicted class probability. */
+  confidence: number;
   factors: RiskFactor[];
   createdAt: string;
 }
@@ -359,6 +418,7 @@ export interface AuthUser {
   role: AuthUserRole;
   active: boolean;
   mustChangePassword: boolean;
+  privacyConsentAccepted: boolean;
 }
 
 export interface LoginChallenge {
@@ -485,6 +545,16 @@ export interface MessageInput {
      * @maxLength 2000
      */
   body: string;
+}
+
+export interface PrivacyConsentInput {
+  /** @minLength 1 */
+  version: string;
+}
+
+export interface PrivacyConsentResult {
+  accepted: boolean;
+  version: string;
 }
 
 export type User = AuthUser & ({
@@ -991,4 +1061,43 @@ export type ListAuditLogsParams = {
  */
 limit?: number;
 };
+
+export type ListMedicalHistory200Item = { [key: string]: unknown };
+
+export type CreateMedicalHistoryBody = {
+  occurredOn: string;
+  title: string;
+  notes?: string;
+};
+
+export type CreateMedicalHistory201 = { [key: string]: unknown };
+
+export type ListConsultations200Item = { [key: string]: unknown };
+
+export type CreateConsultationBody = {
+  consultationDate: string;
+  complaint: string;
+  assessment?: string;
+  notes?: string;
+  followUp?: string;
+  appointmentId?: number;
+};
+
+export type CreateConsultation201 = { [key: string]: unknown };
+
+export type ListPatientPrescriptions200Item = { [key: string]: unknown };
+
+export type CreatePrescriptionBody = {
+  medicationName: string;
+  dosage: string;
+  frequency: string;
+  durationDays: number;
+  instructions?: string;
+  scheduleTimes: string[];
+  form?: string;
+};
+
+export type CreatePrescription201 = { [key: string]: unknown };
+
+export type ListPatientRecordHistory200Item = { [key: string]: unknown };
 

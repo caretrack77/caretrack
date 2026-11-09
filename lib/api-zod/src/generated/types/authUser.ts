@@ -14,4 +14,5 @@ export interface AuthUser {
   role: AuthUserRole;
   active: boolean;
   mustChangePassword: boolean;
+  privacyConsentAccepted: boolean;
 }

@@ -336,6 +336,9 @@ export async function customFetch<T = unknown>(
   }
 
   const headers = mergeHeaders(isRequest(input) ? input.headers : undefined, headersInit);
+  if (!headers.has("x-caretrack-client") && typeof navigator === "undefined") {
+    headers.set("x-caretrack-client", "mobile-app");
+  }
 
   if (
     typeof init.body === "string" &&

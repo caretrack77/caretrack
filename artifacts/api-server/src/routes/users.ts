@@ -51,7 +51,7 @@ router.post("/users", async (req, res): Promise<void> => {
     res.status(409).json({ error: "An account with that email already exists." });
     return;
   }
-  const inserted = await db
+  const [user] = await db
     .insert(usersTable)
     .values({
       name: parsed.data.name.trim(),
@@ -62,8 +62,7 @@ router.post("/users", async (req, res): Promise<void> => {
       // New accounts start with a temporary password and must choose their own.
       mustChangePassword: true,
     })
-    ;
-  const [user] = await db.select({
+    .returning({
       id: usersTable.id,
       name: usersTable.name,
       email: usersTable.email,
@@ -72,7 +71,7 @@ router.post("/users", async (req, res): Promise<void> => {
       phone: usersTable.phone,
       mustChangePassword: usersTable.mustChangePassword,
       createdAt: usersTable.createdAt,
-    }).from(usersTable).where(eq(usersTable.id, Number(inserted[0].insertId))).limit(1);
+    });
   await writeAuditLog(currentUser(res)!.id, "create", "user", user.id, {
     role: user.role,
   });
@@ -130,12 +129,11 @@ router.patch("/users/:id", async (req, res): Promise<void> => {
     return;
   }
 
-  await db
+  const [user] = await db
     .update(usersTable)
     .set(changes)
     .where(eq(usersTable.id, params.data.id))
-    ;
-  const [user] = await db.select({
+    .returning({
       id: usersTable.id,
       name: usersTable.name,
       email: usersTable.email,
@@ -144,7 +142,7 @@ router.patch("/users/:id", async (req, res): Promise<void> => {
       phone: usersTable.phone,
       mustChangePassword: usersTable.mustChangePassword,
       createdAt: usersTable.createdAt,
-    }).from(usersTable).where(eq(usersTable.id, params.data.id)).limit(1);
+    });
   if (!user) {
     res.status(404).json({ error: "User not found." });
     return;

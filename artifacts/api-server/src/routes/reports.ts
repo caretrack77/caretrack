@@ -158,7 +158,7 @@ router.post(
       res.status(404).json({ error: "Patient not found." });
       return;
     }
-    const inserted = await db
+    const [schedule] = await db
       .insert(reportSchedulesTable)
       .values({
         createdBy: user.id,
@@ -167,8 +167,7 @@ router.post(
         nextRunAt: nextRunFor(parsed.data.cadence),
         active: true,
       })
-      ;
-    const [schedule] = await db.select().from(reportSchedulesTable).where(eq(reportSchedulesTable.id, Number(inserted[0].insertId))).limit(1);
+      .returning();
     await writeAuditLog(user.id, "report_schedule_created", "report_schedule", schedule.id, {
       patientId,
       cadence: schedule.cadence,
@@ -204,7 +203,7 @@ router.patch(
       res.status(404).json({ error: "Report schedule not found." });
       return;
     }
-    await db
+    const [schedule] = await db
       .update(reportSchedulesTable)
       .set({
         active: parsed.data.active,
@@ -214,8 +213,7 @@ router.patch(
           : {}),
       })
       .where(eq(reportSchedulesTable.id, existing.id))
-      ;
-    const [schedule] = await db.select().from(reportSchedulesTable).where(eq(reportSchedulesTable.id, existing.id)).limit(1);
+      .returning();
     await writeAuditLog(user.id, "report_schedule_updated", "report_schedule", schedule.id, {
       active: schedule.active,
     });

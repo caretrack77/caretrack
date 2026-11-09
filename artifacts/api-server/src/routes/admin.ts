@@ -50,7 +50,10 @@ router.get("/admin/delivery-status", (_req, res): void => {
     emailSender: process.env.GMAIL_USER || null,
     smsProvider: process.env.SMS_PROVIDER || null,
     smsConfigured: smsConfigured(),
-    offlineFallback: process.env.OTP_OFFLINE_FALLBACK !== "false",
+    offlineFallback:
+      process.env.OTP_OFFLINE_FALLBACK === undefined
+        ? process.env.NODE_ENV !== "production"
+        : process.env.OTP_OFFLINE_FALLBACK === "true",
     otpEnabled: process.env.OTP_ENABLED !== "false",
   });
 });

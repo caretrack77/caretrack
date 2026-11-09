@@ -20,6 +20,7 @@ import { writeAuditLog } from "../lib/audit";
 import { canAccessPatient, canManagePatient, getVisiblePatientIds } from "../lib/patient-access";
 import { careTeamProviderIds } from "../lib/coverage";
 import { decryptText, encryptText, isEncrypted } from "../lib/encryption";
+import { publishUsers } from "../lib/realtime";
 
 const router: IRouter = Router();
 router.use(authenticate, requireUser);
@@ -35,7 +36,10 @@ async function markRead(userId: number, patientId: number): Promise<void> {
   await db
     .insert(messageReadsTable)
     .values({ userId, patientId, lastReadAt: new Date() })
-    .onDuplicateKeyUpdate({ set: { lastReadAt: new Date() } });
+    .onConflictDoUpdate({
+      target: [messageReadsTable.userId, messageReadsTable.patientId],
+      set: { lastReadAt: new Date() },
+    });
 }
 
 function serializeMessage(row: {
@@ -67,7 +71,7 @@ router.get("/messages/threads", async (_req, res): Promise<void> => {
       .from(patientsTable)
       .where(inArray(patientsTable.id, patientIds)),
     db
-      .select({
+      .selectDistinctOn([messagesTable.patientId], {
         patientId: messagesTable.patientId,
         body: messagesTable.body,
         createdAt: messagesTable.createdAt,
@@ -78,11 +82,9 @@ router.get("/messages/threads", async (_req, res): Promise<void> => {
       .where(inArray(messagesTable.patientId, patientIds))
       .orderBy(messagesTable.patientId, desc(messagesTable.createdAt)),
   ]);
-  const latestByPatient = new Map<number, (typeof latest)[number]>();
-  for (const row of latest) if (!latestByPatient.has(row.patientId)) latestByPatient.set(row.patientId, row);
   // Unread = messages from someone else, newer than this user's last read time.
   const unread = await db
-    .select({ patientId: messagesTable.patientId, total: sql<number>`count(*)` })
+    .select({ patientId: messagesTable.patientId, total: sql<number>`count(*)::int` })
     .from(messagesTable)
     .leftJoin(
       messageReadsTable,
@@ -101,7 +103,7 @@ router.get("/messages/threads", async (_req, res): Promise<void> => {
     .groupBy(messagesTable.patientId);
   const threads = patients
     .map((patient) => {
-      const last = latestByPatient.get(patient.id);
+      const last = latest.find((row) => row.patientId === patient.id);
       return {
         patientId: patient.id,
         patientName: patient.name,
@@ -158,11 +160,10 @@ router.post("/patients/:id/messages", async (req, res): Promise<void> => {
     res.status(403).json({ error: "Caregiver accounts can read messages but not send them." });
     return;
   }
-  const inserted = await db
+  const [message] = await db
     .insert(messagesTable)
     .values({ patientId, senderId: user.id, body: encryptText(body.slice(0, 2000)) })
-    ;
-  const [message] = await db.select().from(messagesTable).where(eq(messagesTable.id, Number(inserted[0].insertId))).limit(1);
+    .returning();
   await markRead(user.id, patientId);
 
   // Notify the other side: the care team when a patient writes, otherwise the patient and caregivers.
@@ -185,6 +186,7 @@ router.post("/patients/:id/messages", async (req, res): Promise<void> => {
     );
   }
   recipients = [...new Set(recipients)].filter((id) => id !== user.id);
+  publishUsers(recipients, { type: "message", patientId, id: message.id });
   // One unread notification per conversation is enough; don't stack them.
   const recent = new Date(Date.now() - 10 * 60 * 1000);
   for (const userId of recipients) {
@@ -210,6 +212,7 @@ router.post("/patients/:id/messages", async (req, res): Promise<void> => {
       // Message text stays encrypted in the messages table only.
       message: "Open Messages to read it.",
     });
+    publishUsers([userId], { type: "notification", patientId });
   }
   await writeAuditLog(user.id, "message_sent", "patient", patientId, { messageId: message.id });
   res.status(201).json(
