@@ -12,6 +12,7 @@ import pinoHttp from "pino-http";
 import helmet from "helmet";
 import router from "./routes";
 import { logger } from "./lib/logger";
+import { SESSION_HEADER } from "./lib/auth";
 
 const app: Express = express();
 
@@ -54,7 +55,21 @@ app.use(
     },
   }),
 );
-app.use(cors({ origin: process.env.CORS_ORIGIN?.split(",") ?? false, credentials: true }));
+// The Android app (Capacitor) loads its screens from https://localhost and calls this API
+// cross-origin with a bearer token. It is allowed without cookies (credentials), so a page on
+// another site can never ride on a signed-in browser session through this rule.
+const APP_ORIGINS = new Set(["https://localhost", "capacitor://localhost"]);
+const webOrigins = process.env.CORS_ORIGIN?.split(",").map((o) => o.trim()).filter(Boolean) ?? [];
+app.use(
+  cors((req, callback) => {
+    const origin = req.headers.origin;
+    if (origin && APP_ORIGINS.has(origin)) {
+      callback(null, { origin: true, credentials: false, exposedHeaders: [SESSION_HEADER, "content-disposition"], maxAge: 600 });
+      return;
+    }
+    callback(null, { origin: webOrigins.length ? webOrigins : false, credentials: true });
+  }),
+);
 app.use(cookieParser());
 // Lab result uploads carry a file (up to 5 MB, base64-encoded); everything else stays small.
 const smallJson = express.json({ limit: "100kb" });

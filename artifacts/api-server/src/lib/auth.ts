@@ -41,6 +41,21 @@ export { PRIVACY_NOTICE_VERSION } from "./security-config";
 
 const SESSION_COOKIE = "caretrack_session";
 const SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
+/** Response header that hands the Android app its session token (it can't use cross-site cookies). */
+export const SESSION_HEADER = "x-caretrack-session";
+
+/** True for the CareTrack Android app, which authenticates with a bearer token instead of a cookie. */
+export function isAppClient(req: Request): boolean {
+  return req.header("x-caretrack-client")?.toLowerCase() === "android-app";
+}
+
+/** The session token: the HTTP-only cookie (web) or `Authorization: Bearer` (Android app). */
+export function sessionToken(req: Request): string | undefined {
+  const auth = req.header("authorization");
+  if (auth && /^Bearer\s+/i.test(auth)) return auth.replace(/^Bearer\s+/i, "").trim();
+  const cookie = req.cookies?.[SESSION_COOKIE];
+  return typeof cookie === "string" ? cookie : undefined;
+}
 
 export type CurrentUser = Pick<
   typeof usersTable.$inferSelect,
@@ -164,7 +179,7 @@ export async function authenticate(
     return;
   }
   res.locals.authChecked = true;
-  const token = req.cookies?.[SESSION_COOKIE];
+  const token = sessionToken(req);
   if (typeof token !== "string" || token.length < 32) {
     next();
     return;
@@ -251,7 +266,10 @@ async function startSession(req: Request, res: Response, userId: number): Promis
     userId,
     expiresAt: new Date(Date.now() + SESSION_LIFETIME_MS),
   });
-  res.cookie(SESSION_COOKIE, token, cookieOptions(req));
+  // Browsers get an HTTP-only cookie (never readable by page scripts). The Android app
+  // runs on its own origin, so it receives the token in a header and sends it back as a bearer token.
+  if (isAppClient(req)) res.setHeader(SESSION_HEADER, token);
+  else res.cookie(SESSION_COOKIE, token, cookieOptions(req));
 }
 
 const router: IRouter = Router();
@@ -496,7 +514,7 @@ router.post("/auth/change-password", passwordRateLimit, authenticate, requireUse
     .where(eq(usersTable.id, user.id))
     .returning();
   // Sign out every other device; keep this session.
-  const token = req.cookies?.[SESSION_COOKIE];
+  const token = sessionToken(req);
   await db
     .delete(sessionsTable)
     .where(and(eq(sessionsTable.userId, user.id), ne(sessionsTable.tokenHash, hashToken(String(token)))));
@@ -520,7 +538,7 @@ router.get("/auth/me", authenticate, requireUser, (_req, res): void => {
 });
 
 router.post("/auth/logout", async (req, res): Promise<void> => {
-  const token = req.cookies?.[SESSION_COOKIE];
+  const token = sessionToken(req);
   if (typeof token === "string" && token.length >= 32) {
     const [session] = await db
       .delete(sessionsTable)

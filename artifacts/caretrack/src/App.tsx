@@ -18,7 +18,10 @@ import {
   useUpdateDoseStatus, useUpdateMedication, useSendLoginOtp, useVerifyLoginOtp, useChangePassword, getGetCurrentUserQueryKey, useGetRiskModel, getGetRiskModelQueryKey, useTrainRiskModel, useListRiskPredictions, getListRiskPredictionsQueryKey, useGetPatientRisk, getGetPatientRiskQueryKey, useListLabResults, getListLabResultsQueryKey, useUploadLabResult, useReviewLabResult, useListAppointments, getListAppointmentsQueryKey, useCreateAppointment, useUpdateAppointment, useAskAssistant, updateDoseStatus, useCreatePatientAccount, useGetDeliveryStatus, useSendDeliveryTest, useListCoverage, getListCoverageQueryKey, useCreateCoverage, useEndCoverage, useListProviders, useGetMedicationProgress, getGetMedicationProgressQueryKey, useListMessageThreads, getListMessageThreadsQueryKey, useListPatientMessages, getListPatientMessagesQueryKey, useSendPatientMessage, useMarkPatientMessagesRead,   useUpdatePatient, useUpdateReportSchedule, useUpdateUser, useListHealthMetrics, useCreateHealthMetric, useListHealthLogs, useCreateHealthLog, getListHealthMetricsQueryKey, getListHealthLogsQueryKey,
 } from '@workspace/api-client-react';
 import type { Analytics, Appointment, AuditLog, AuthUser, Coverage, LoginChallenge, OtpSendResult, Dose, Medication, Notification, Patient, Report, ReportSchedule, User, HealthMetric, HealthMetricInputMetricType, HealthLog } from '@workspace/api-client-react';
+import { customFetch } from '@workspace/api-client-react';
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
+import { builtInServerUrl, clearNativeSession, getServerUrl, isNativeApp, normalizeServerUrl, openProtectedFile, saveServerUrl, streamServerEvents, testServer } from './native';
+import { clearNativeNotifications, exactAlarmsAllowed, notificationPermission, openExactAlarmSettings, previewNativeWellness, requestNotificationPermission, syncNativeDoseReminders, syncNativeWellness } from './native-notifications';
 import './index.css';
 
 const client = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 15_000 } } });
@@ -44,6 +47,15 @@ const initials = (name = '') => name.split(' ').map((n) => n[0]).slice(0, 2).joi
 const clearOfflineData = () => {
   navigator.serviceWorker?.controller?.postMessage('clear-cache');
   try { localStorage.removeItem('caretrack-offline-doses'); } catch { /* storage unavailable */ }
+  // Android app: forget the session token and cancel this user's scheduled reminders and tips.
+  void clearNativeSession();
+  void clearNativeNotifications();
+};
+/** Downloads a protected file. The browser uses the link itself; the Android app fetches it with its token. */
+const nativeDownload = (path: string, name: string) => (e: { preventDefault: () => void }) => {
+  if (!isNativeApp) return;
+  e.preventDefault();
+  openProtectedFile(path, name).catch((err: Error) => window.alert(err.message));
 };
 const homeFor = (role: string) => (role === 'patient' ? '/today' : '/dashboard');
 const roleName = (role: string) => role.charAt(0).toUpperCase() + role.slice(1);
@@ -81,6 +93,9 @@ function LoginPage() {
   const [challenge, setChallenge] = useState<LoginChallenge|null>(null);
   const [sent, setSent] = useState<OtpSendResult|null>(null);
   const [code, setCode] = useState('');
+  // Android app: ask for the server address first (or when the user taps "Change").
+  const [editServer, setEditServer] = useState(false);
+  const needsServer = isNativeApp && (editServer || !getServerUrl());
   const submit = (e: FormEvent) => {
     e.preventDefault(); setError('');
     login.mutate({ data: { email: email.trim(), password: password.trim() } }, { onSuccess: (r) => { if (r.otpRequired) { setChallenge(r); setSent(null); setCode(''); } else setLocation('/'); }, onError: (err) => setError(apiError(err, 'We couldn’t sign you in.') + ' Passwords are case-sensitive. Use the eye button to check what you typed.') });
@@ -97,24 +112,25 @@ function LoginPage() {
   const inputClass = 'h-12 w-full rounded-xl border border-input bg-white px-4 text-sm outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10';
   const cardClass = 'space-y-5 rounded-3xl border border-[#dce9e9] bg-white p-6 shadow-[0_20px_50px_rgba(31,74,88,.08)] sm:p-8';
   return <div className="min-h-[100dvh] bg-[#eef6f7] text-foreground flex flex-col lg:flex-row">
-    <section className="relative flex min-h-[36vh] flex-col justify-between overflow-hidden bg-[#174353] px-7 py-8 text-white lg:min-h-[100dvh] lg:w-[48%] lg:px-14 lg:py-12">
+    <section className="relative flex flex-col justify-between overflow-hidden bg-[#174353] px-6 py-6 text-white sm:min-h-[36vh] sm:px-7 sm:py-8 lg:min-h-[100dvh] lg:w-[48%] lg:px-14 lg:py-12">
       <div className="absolute -right-24 -top-24 h-96 w-96 rounded-full border border-white/10" />
       <div className="absolute -right-4 top-20 h-72 w-72 rounded-full border border-white/10" />
       <div className="relative flex items-center gap-3"><Brand light /><span className="rounded-full border border-white/20 px-3 py-1 text-[11px] tracking-wide text-white/70">CARE, IN SYNC</span></div>
-      <div className="relative max-w-xl py-12">
-        <div className="mb-6 flex items-center gap-2 text-sm font-semibold tracking-[.16em] text-[#73d8c4]"><span className="h-px w-8 bg-[#73d8c4]" /> MADE FOR EVERYDAY CARE</div>
-        <h1 className="max-w-lg text-4xl font-bold leading-[1.1] tracking-[-.045em] sm:text-5xl lg:text-[58px]">A steadier rhythm for better care.</h1>
-        <p className="mt-6 max-w-md text-base leading-7 text-white/70">CareTrack keeps medication schedules clear for the people who give care and the people who receive it.</p>
-        <div className="mt-12 flex items-center gap-4 rounded-2xl border border-white/10 bg-white/[.06] p-4 backdrop-blur-sm">
+      <div className="relative max-w-xl py-6 sm:py-12">
+        <div className="mb-4 flex items-center gap-2 text-xs font-semibold tracking-[.16em] text-[#73d8c4] sm:mb-6 sm:text-sm"><span className="h-px w-8 bg-[#73d8c4]" /> MADE FOR EVERYDAY CARE</div>
+        <h1 className="max-w-lg text-3xl font-bold leading-[1.1] tracking-[-.045em] sm:text-5xl lg:text-[58px]">A steadier rhythm for better care.</h1>
+        <p className="mt-4 max-w-md text-sm leading-6 text-white/70 sm:mt-6 sm:text-base sm:leading-7">CareTrack keeps medication schedules clear for the people who give care and the people who receive it.</p>
+        <div className="mt-12 hidden items-center gap-4 rounded-2xl border border-white/10 bg-white/[.06] p-4 backdrop-blur-sm sm:flex">
           <div className="grid h-11 w-11 place-items-center rounded-xl bg-[#6bd5c0]/15 text-[#77dfc9]"><HeartPulse size={22}/></div>
           <div><div className="text-sm font-semibold">The right dose. The right moment.</div><div className="mt-1 text-xs text-white/55">A shared view of the day, without the guesswork.</div></div>
         </div>
       </div>
-      <div className="relative flex items-center justify-between text-xs text-white/45"><span>Secure patient care platform</span><span>Designed for coordinated care</span></div>
+      <div className="relative hidden items-center justify-between text-xs text-white/45 sm:flex"><span>Secure patient care platform</span><span>Designed for coordinated care</span></div>
     </section>
-    <section className="flex flex-1 items-center justify-center px-5 py-12 sm:px-10">
+    <section className="flex flex-1 items-center justify-center px-5 py-8 sm:px-10 sm:py-12">
       <div className="w-full max-w-[420px] page-enter">
-        <div className="mb-9"><p className="text-xs font-bold uppercase tracking-[.16em] text-primary">Welcome back</p><h2 className="mt-3 text-3xl font-bold text-[#173d4a]">Sign in to CareTrack</h2><p className="mt-2 text-sm text-muted-foreground">Sign in with the account provided by your administrator.</p></div>
+        {needsServer ? <ServerSetup inputClass={inputClass} cardClass={cardClass} onDone={()=>{setEditServer(false);setError('')}} onCancel={getServerUrl()?()=>setEditServer(false):undefined}/> : <>
+        <div className="mb-6 sm:mb-9"><p className="text-xs font-bold uppercase tracking-[.16em] text-primary">Welcome back</p><h2 className="mt-3 text-2xl font-bold text-[#173d4a] sm:text-3xl">Sign in to CareTrack</h2><p className="mt-2 text-sm text-muted-foreground">Sign in with the account provided by your administrator.</p></div>
         {!challenge ? <form onSubmit={submit} className={cardClass}>
           <label className="block"><span className="mb-2 block text-sm font-semibold">Email address</span><input data-testid="input-email" type="email" autoComplete="username" required value={email} onChange={e=>setEmail(e.target.value)} className={inputClass} placeholder="you@example.com"/></label>
           <label className="block"><span className="mb-2 block text-sm font-semibold">Password</span><PasswordInput testId="input-password" required value={password} onChange={setPassword} autoComplete="current-password" className={inputClass} placeholder="Enter your password"/></label>
@@ -135,9 +151,33 @@ function LoginPage() {
           {error && <div data-testid="status-login-error" role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
           <button type="button" data-testid="button-otp-back" onClick={restart} className="flex items-center gap-1.5 text-xs font-semibold text-[#47737b] hover:text-primary"><ArrowLeft size={14}/> Use a different account</button>
         </div>}
+        {isNativeApp&&<p className="mt-5 text-center text-[11px] text-muted-foreground" data-testid="text-server">Server: {new URL(getServerUrl()!).host} · <button type="button" data-testid="button-change-server" onClick={()=>{restart();setEditServer(true)}} className="font-semibold text-primary underline-offset-2 hover:underline">Change</button></p>}
+        </>}
       </div>
     </section>
   </div>;
+}
+
+/** Android app only: which CareTrack server to use. Checked before it is saved; HTTPS only. */
+function ServerSetup({inputClass,cardClass,onDone,onCancel}:{inputClass:string;cardClass:string;onDone:()=>void;onCancel?:()=>void}){
+  const [value,setValue]=useState(getServerUrl()||builtInServerUrl()||''),[error,setError]=useState(''),[busy,setBusy]=useState(false);
+  const submit=async(e:FormEvent)=>{
+    e.preventDefault();setError('');
+    const url=normalizeServerUrl(value);
+    if(!url){setError('Enter the secure (https://) address of your CareTrack server, for example caretrack.example.com.');return}
+    setBusy(true);const problem=await testServer(url);setBusy(false);
+    if(problem){setError(problem);return}
+    // Restart the app on the new server so cached data and the offline worker match it.
+    await saveServerUrl(url);client.clear();onDone();window.location.replace('/login');
+  };
+  return <form onSubmit={submit} className={cardClass} data-testid="panel-server-setup">
+    <div className="flex items-start gap-3"><div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#e4f4f0] text-[#25867c]"><Wifi size={21}/></div><div><h3 className="font-bold text-[#173d4a]">Connect to your CareTrack server</h3><p className="mt-1 text-xs leading-5 text-muted-foreground">Enter the web address your care team uses for CareTrack. You only need to do this once.</p></div></div>
+    <label className="block"><span className="mb-2 block text-sm font-semibold">Server address</span><input data-testid="input-server-url" type="text" inputMode="url" enterKeyHint="go" autoCapitalize="none" autoCorrect="off" spellCheck={false} required value={value} onChange={e=>setValue(e.target.value)} className={inputClass} placeholder="caretrack.example.com"/></label>
+    {error&&<div role="alert" data-testid="status-server-error" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
+    <button data-testid="button-save-server" disabled={busy} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#17647a] font-semibold text-white shadow-sm transition hover:bg-[#125366] disabled:opacity-60">{busy?'Checking connection…':'Connect'} <ArrowRight size={17}/></button>
+    {onCancel&&<button type="button" onClick={onCancel} className="w-full text-center text-xs font-semibold text-[#47737b]">Cancel</button>}
+    <p className="flex items-center justify-center gap-1.5 text-center text-xs leading-5 text-muted-foreground"><ShieldCheck size={13}/> Only secure (HTTPS) connections are allowed</p>
+  </form>;
 }
 
 function Brand({light=false}:{light?:boolean}) {
@@ -146,13 +186,19 @@ function Brand({light=false}:{light?:boolean}) {
 
 function AuthenticatedApp() {
   const [currentPath, setLocation] = useLocation();
-  const me = useGetCurrentUser();
-  const user = me.data as AuthUser | undefined;
+  // Android app with no server chosen yet: skip the session check and go to the connect screen.
+  const noServer = isNativeApp && !getServerUrl();
+  const me = useGetCurrentUser({ query: { enabled: !noServer, queryKey: getGetCurrentUserQueryKey() } });
+  // Only a real user object counts as signed in (never an HTML page or other unexpected reply).
+  const user = me.data && typeof me.data === 'object' && 'id' in me.data ? me.data as AuthUser : undefined;
   const threads = useListMessageThreads({ query: { enabled: !!user && !user.mustChangePassword, queryKey: getListMessageThreadsQueryKey(), refetchInterval: 10_000 } });
   const unreadMessages = (threads.data || []).reduce((n, t) => n + t.unreadCount, 0);
   useRealtimeEvents(Boolean(user && !user.mustChangePassword));
   const logout = useLogout();
   const [mobileNav,setMobileNav]=useState(false);
+  // Android back button closes the menu first (see native.ts).
+  useEffect(()=>{const close=()=>setMobileNav(false);window.addEventListener('caretrack-close-nav',close);return()=>window.removeEventListener('caretrack-close-nav',close)},[]);
+  if (noServer) return <LoginRedirect/>;
   if (me.isLoading) return <LoadingScreen/>;
   if (me.isError || !user) return <LoginRedirect/>;
   if (user.mustChangePassword) return <FirstLoginPasswordScreen user={user} onSignOut={()=>logout.mutate(undefined,{onSuccess:()=>{client.clear();clearOfflineData();setLocation('/login')}})}/>;
@@ -171,14 +217,15 @@ function AuthenticatedApp() {
       <div className="mt-3 shrink-0 rounded-2xl border border-white/10 bg-[#103747] p-4"><div className="flex items-center gap-2 text-xs font-semibold text-[#86ded0]"><ShieldCheck size={15}/> Private demo space</div><p className="mt-2 text-[11px] leading-5 text-white/50">Only your assigned care team can see this information.</p></div>
       <button data-testid="button-logout" onClick={()=>logout.mutate(undefined,{onSuccess:()=>{client.clear();clearOfflineData();setLocation('/login')}})} className="mt-4 flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-white/65 hover:bg-white/[.06] hover:text-white"><LogOut size={17}/> Sign out</button>
     </aside>
-    {mobileNav&&<div className="fixed inset-0 z-50 bg-[#102e39]/45 lg:hidden" onClick={()=>setMobileNav(false)}><div className="sidebar-scroll flex h-full w-[280px] flex-col overflow-y-auto bg-[#174353] p-5 text-white" onClick={e=>e.stopPropagation()}><div className="flex items-center justify-between"><Brand light/><button data-testid="button-close-navigation" onClick={()=>setMobileNav(false)} className="rounded-lg p-2"><X size={18}/></button></div><nav className="mt-8 space-y-1">{navItems.filter(n=>n.roles.includes(user.role)).map(({href,label,icon:Icon})=><Link key={href} href={href} onClick={()=>setMobileNav(false)} data-testid={`mobile-link-${href.slice(1).replace('/','-')}`} className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-white/75 hover:bg-white/10"><Icon size={18}/>{label}{href==='/messages'&&unreadMessages>0&&<span className="ml-auto rounded-full bg-[#74d9c5] px-1.5 text-[10px] font-bold text-[#123f4d]">{unreadMessages}</span>}</Link>)}</nav><button data-testid="button-logout-mobile" onClick={()=>logout.mutate(undefined,{onSuccess:()=>{client.clear();clearOfflineData();setLocation('/login')}})} className="mt-8 flex items-center gap-3 px-3 py-3 text-sm text-white/70"><LogOut size={17}/>Sign out</button></div></div>}
+    {mobileNav&&<div data-mobile-nav-open className="fixed inset-0 z-50 bg-[#102e39]/45 lg:hidden" onClick={()=>setMobileNav(false)}><div className="sidebar-scroll flex h-full w-[280px] flex-col overflow-y-auto bg-[#174353] p-5 text-white" onClick={e=>e.stopPropagation()}><div className="flex items-center justify-between"><Brand light/><button data-testid="button-close-navigation" onClick={()=>setMobileNav(false)} className="rounded-lg p-2"><X size={18}/></button></div><nav className="mt-8 space-y-1">{navItems.filter(n=>n.roles.includes(user.role)).map(({href,label,icon:Icon})=><Link key={href} href={href} onClick={()=>setMobileNav(false)} data-testid={`mobile-link-${href.slice(1).replace('/','-')}`} className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-white/75 hover:bg-white/10"><Icon size={18}/>{label}{href==='/messages'&&unreadMessages>0&&<span className="ml-auto rounded-full bg-[#74d9c5] px-1.5 text-[10px] font-bold text-[#123f4d]">{unreadMessages}</span>}</Link>)}</nav><button data-testid="button-logout-mobile" onClick={()=>logout.mutate(undefined,{onSuccess:()=>{client.clear();clearOfflineData();setLocation('/login')}})} className="mt-8 flex items-center gap-3 px-3 py-3 text-sm text-white/70"><LogOut size={17}/>Sign out</button></div></div>}
     <div className="lg:pl-[252px]">
       <header className="sticky top-0 z-30 flex h-[68px] items-center justify-between border-b border-[#dfebeb] bg-[#f7fbfb]/95 px-4 backdrop-blur sm:px-8">
         <button data-testid="button-open-navigation" onClick={()=>setMobileNav(true)} className="rounded-lg p-2 text-[#42616c] lg:hidden"><Menu size={21}/></button>
         <div className="hidden text-sm text-[#67818a] sm:block">Care, made clearer <span className="mx-2 text-[#a5b7bb]">/</span><span className="font-semibold text-[#254a57]">{navItems.find(x=>x.href===pathTitle)?.label||'Patient details'}</span></div>
-        <div className="ml-auto flex items-center gap-3"><div className="hidden items-center gap-2 rounded-full border border-[#d9e8e8] bg-white px-3 py-1.5 text-xs text-[#67818a] sm:flex"><span className="h-2 w-2 rounded-full bg-[#4cb7a3]"/>{new Date().toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'})}</div><NotificationBell readOnly={user.role==='caregiver'}/><button data-testid="button-help" title="CareTrack demo help" className="grid h-9 w-9 place-items-center rounded-full border border-[#dce8e9] bg-white text-[#587680] hover:bg-[#f0f7f7]"><CircleHelp size={17}/></button><Avatar name={user.name} small/></div>
+        <div className="ml-auto flex items-center gap-3"><div className="hidden items-center gap-2 rounded-full border border-[#d9e8e8] bg-white px-3 py-1.5 text-xs text-[#67818a] sm:flex"><span className="h-2 w-2 rounded-full bg-[#4cb7a3]"/>{new Date().toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'})}</div><NotificationBell user={user} readOnly={user.role==='caregiver'}/><button data-testid="button-help" title="CareTrack demo help" className="grid h-9 w-9 place-items-center rounded-full border border-[#dce8e9] bg-white text-[#587680] hover:bg-[#f0f7f7]"><CircleHelp size={17}/></button><Avatar name={user.name} small/></div>
       </header>
       <OfflineSync/>
+      <WellnessNotifications user={user}/>
       <main className="mx-auto max-w-[1450px] px-4 py-6 sm:px-8 sm:py-8">
         <Switch>
           <Route path="/dashboard"><RoleGate user={user} allowed={['admin','provider','caregiver']}><Dashboard user={user}/></RoleGate></Route>
@@ -208,16 +255,34 @@ function AuthenticatedApp() {
 /** SSE is the primary live update channel; existing React Query polling remains a fallback. */
 function useRealtimeEvents(enabled: boolean) {
   const qc = useQueryClient();
+  const refreshFrom = (raw: string) => {
+    let data: {patientId?:number} = {};
+    try { data = raw ? JSON.parse(raw) : {}; } catch { /* non-message SSE keepalive */ }
+    qc.invalidateQueries({ queryKey: getListMessageThreadsQueryKey() });
+    qc.invalidateQueries({ queryKey: getListNotificationsQueryKey() });
+    if (data.patientId) qc.invalidateQueries({ queryKey: getListPatientMessagesQueryKey(data.patientId) });
+  };
+  // Android app: EventSource can't send the session token, so the stream is read with fetch.
+  // It reconnects after a drop or when the connection returns; polling still covers the gaps.
   useEffect(() => {
-    if (!enabled || typeof EventSource === 'undefined') return;
-    const source = new EventSource('/api/events');
-    const refresh = (event: Event) => {
-      let data: {patientId?:number} = {};
-      try { data = (event as MessageEvent<string>).data ? JSON.parse((event as MessageEvent<string>).data) : {}; } catch { /* non-message SSE keepalive */ }
-      qc.invalidateQueries({ queryKey: getListMessageThreadsQueryKey() });
-      qc.invalidateQueries({ queryKey: getListNotificationsQueryKey() });
-      if (data.patientId) qc.invalidateQueries({ queryKey: getListPatientMessagesQueryKey(data.patientId) });
+    if (!enabled || !isNativeApp) return;
+    const controller = new AbortController();
+    let retry = 0;
+    const connect = async () => {
+      while (!controller.signal.aborted) {
+        try { await streamServerEvents((type, data) => { if (type === 'message' || type === 'notification') { retry = 0; refreshFrom(data); } }, controller.signal); } catch { /* offline or server restart */ }
+        if (controller.signal.aborted) return;
+        retry = Math.min(retry + 1, 6);
+        await new Promise((resolve) => setTimeout(resolve, 2 ** retry * 1000));
+      }
     };
+    void connect();
+    return () => controller.abort();
+  }, [enabled]);
+  useEffect(() => {
+    if (!enabled || isNativeApp || typeof EventSource === 'undefined') return;
+    const source = new EventSource('/api/events');
+    const refresh = (event: Event) => refreshFrom((event as MessageEvent<string>).data);
     source.addEventListener('message', refresh);
     source.addEventListener('notification', refresh);
     source.onerror = () => { source.close(); };
@@ -236,7 +301,7 @@ function EmptyState({title,body,icon:Icon=ClipboardList}:{title:string;body:stri
 function ErrorState({retry}:{retry:()=>void}){return <div className="m-5 flex items-center justify-between gap-3 rounded-xl border border-red-200 bg-red-50 p-4" data-testid="status-error"><div><div className="text-sm font-semibold text-red-900">We couldn’t load this information</div><div className="mt-1 text-xs text-red-700">Check your connection and try again.</div></div><button data-testid="button-retry" onClick={retry} className="rounded-lg border border-red-200 bg-white px-3 py-2 text-xs font-semibold text-red-800">Try again</button></div>}
 function StatusPill({status}:{status:string}){const styles:Record<string,string>={taken:'bg-[#e5f5ee] text-[#28745a]',scheduled:'bg-[#e9f2f6] text-[#366a7d]',missed:'bg-[#fff0eb] text-[#ad5b45]',skipped:'bg-[#f1f1f0] text-[#687a7c]',active:'bg-[#e5f5ee] text-[#28745a]',inactive:'bg-[#f2f3f3] text-[#778589]'};return <span data-testid={`status-pill-${status}`} className={`inline-flex items-center rounded-full px-2.5 py-1 text-[11px] font-semibold capitalize ${styles[status]||styles.scheduled}`}>{status}</span>}
 
-function NotificationBell({readOnly}:{readOnly:boolean}){
+function NotificationBell({user,readOnly}:{user:AuthUser;readOnly:boolean}){
   const query=useListNotifications({query:{queryKey:getListNotificationsQueryKey(),refetchInterval:30_000}}),mark=useMarkNotificationRead(),qc=useQueryClient(),[open,setOpen]=useState(false);
   const notifications=query.data||[],unread=notifications.filter(n=>!n.read).length;
   useNotificationAlerts(notifications);
@@ -246,7 +311,7 @@ function NotificationBell({readOnly}:{readOnly:boolean}){
     <button data-testid="button-open-notifications" aria-label={`Notifications${unread?`, ${unread} unread`:''}`} aria-expanded={open} onClick={()=>setOpen(!open)} className="relative grid h-9 w-9 place-items-center rounded-full border border-[#dce8e9] bg-white text-[#587680] transition hover:bg-[#f0f7f7]"><Bell size={16}/>{unread>0&&<span data-testid="status-unread-notifications" className="absolute -right-1 -top-1 grid h-[17px] min-w-[17px] place-items-center rounded-full bg-[#d9755e] px-1 text-[9px] font-bold text-white">{unread>9?'9+':unread}</span>}</button>
     {open&&<div data-testid="panel-notifications" className="absolute right-0 top-12 z-50 w-[min(360px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-[#dce8e8] bg-white shadow-[0_18px_45px_rgba(22,62,76,.16)]">
       <div className="flex items-center justify-between border-b border-[#edf2f2] px-4 py-3"><div><div className="text-sm font-bold text-[#254954]">Notifications</div><div className="text-[11px] text-[#81969b]">{unread?`${unread} unread`:'You’re all caught up'}</div></div><button data-testid="button-close-notifications" onClick={()=>setOpen(false)} className="rounded-lg p-1.5 text-[#789096] hover:bg-[#f2f7f7]"><X size={16}/></button></div>
-      <SoundSettings/>{query.isLoading?<div data-testid="status-notifications-loading" className="space-y-2 p-4"><div className="h-12 animate-pulse rounded-xl bg-[#eff5f5]"/><div className="h-12 animate-pulse rounded-xl bg-[#eff5f5]"/></div>:query.isError?<div data-testid="status-notifications-error" className="p-4 text-xs text-[#a55348]">Notifications couldn’t be loaded. <button data-testid="button-retry-notifications" onClick={()=>query.refetch()} className="font-semibold underline">Try again</button></div>:notifications.length===0?<div data-testid="state-notifications-empty" className="p-6 text-center"><div className="text-sm font-semibold text-[#45636c]">Nothing new</div><div className="mt-1 text-xs text-[#8aa0a4]">Updates from your care team will appear here.</div></div>:<div className="max-h-[360px] divide-y divide-[#edf2f2] overflow-y-auto">{notifications.slice(0,8).map(n=><button key={n.id} data-testid={`notification-item-${n.id}`} onClick={()=>read(n)} disabled={mark.isPending} className={`block w-full px-4 py-3 text-left transition hover:bg-[#f6faf9] ${n.read?'':'bg-[#f1f8f6]'}`}><div className="flex items-start gap-2.5"><span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${n.read?'bg-transparent':'bg-[#42ad99]'}`}/><span className="min-w-0 flex-1"><span className="flex items-center justify-between gap-2"><span className="text-xs font-bold text-[#355661]" data-testid={`text-notification-title-${n.id}`}>{n.title}</span><span className="shrink-0 text-[10px] text-[#96a8ac]">{new Date(n.createdAt).toLocaleDateString()}</span></span><span className="mt-1 block text-xs leading-5 text-[#71888e]">{n.message}</span></span></div></button>)}</div>}
+      <SoundSettings user={user}/>{query.isLoading?<div data-testid="status-notifications-loading" className="space-y-2 p-4"><div className="h-12 animate-pulse rounded-xl bg-[#eff5f5]"/><div className="h-12 animate-pulse rounded-xl bg-[#eff5f5]"/></div>:query.isError?<div data-testid="status-notifications-error" className="p-4 text-xs text-[#a55348]">Notifications couldn’t be loaded. <button data-testid="button-retry-notifications" onClick={()=>query.refetch()} className="font-semibold underline">Try again</button></div>:notifications.length===0?<div data-testid="state-notifications-empty" className="p-6 text-center"><div className="text-sm font-semibold text-[#45636c]">Nothing new</div><div className="mt-1 text-xs text-[#8aa0a4]">Updates from your care team will appear here.</div></div>:<div className="max-h-[360px] divide-y divide-[#edf2f2] overflow-y-auto">{notifications.slice(0,8).map(n=><button key={n.id} data-testid={`notification-item-${n.id}`} onClick={()=>read(n)} disabled={mark.isPending} className={`block w-full px-4 py-3 text-left transition hover:bg-[#f6faf9] ${n.read?'':'bg-[#f1f8f6]'}`}><div className="flex items-start gap-2.5"><span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${n.read?'bg-transparent':'bg-[#42ad99]'}`}/><span className="min-w-0 flex-1"><span className="flex items-center justify-between gap-2"><span className="text-xs font-bold text-[#355661]" data-testid={`text-notification-title-${n.id}`}>{n.title}</span><span className="shrink-0 text-[10px] text-[#96a8ac]">{new Date(n.createdAt).toLocaleDateString()}</span></span><span className="mt-1 block text-xs leading-5 text-[#71888e]">{n.message}</span></span></div></button>)}</div>}
     </div>}
   </div>;
 }
@@ -332,8 +397,15 @@ function TodayPage({user}:{user:AuthUser}){
   const counts={all:filtered.length,scheduled:filtered.filter(d=>d.status==='scheduled').length,taken:filtered.filter(d=>d.status==='taken').length};
   useEffect(() => {
     if (!doses.data) return;
+    if (isNativeApp) {
+      // Android app: real phone alarms (work offline and with the app closed), plus today's
+      // activity for personalized wellness tips.
+      if (selectedDate === dateToday()) { latestDoses = doses.data; window.dispatchEvent(new Event('caretrack-doses')); }
+      void syncNativeDoseReminders(doses.data);
+      return;
+    }
     navigator.serviceWorker?.ready.then((registration) => registration.active?.postMessage({ type: 'cache-dose-schedule', doses: doses.data }));
-  }, [doses.data]);
+  }, [doses.data, selectedDate]);
   useEffect(() => {
     const alarm = () => {
       const due = (doses.data || []).find((dose) => dose.status === 'scheduled' && Math.abs(new Date(dose.scheduledTime).getTime() - Date.now()) < 30_000);
@@ -544,16 +616,16 @@ function PrivacyConsentScreen({user,onSignOut}:{user:AuthUser;onSignOut:()=>void
     setAccepting(true);
     setError("");
     try {
-      const response = await fetch("/api/auth/privacy-consent", {
+      // Through the shared API client, so the Android app's server address and token are used too.
+      await customFetch("/api/auth/privacy-consent", {
         method: "POST",
         credentials: "include",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ version: "2026-11" }),
       });
-      if (!response.ok) throw new Error((await response.json()).error || "Could not save consent.");
       await qc.invalidateQueries({ queryKey: getGetCurrentUserQueryKey() });
     } catch (e) {
-      setError(e instanceof Error ? e.message : "Could not save consent.");
+      setError(apiError(e, "Could not save consent."));
       setAccepting(false);
     }
   };
@@ -692,13 +764,77 @@ function useNotificationAlerts(notifications:Notification[]){
     if(played&&document.hidden&&'Notification' in window&&Notification.permission==='granted'){const n=fresh[0];try{new window.Notification(`CareTrack: ${n.title}`,{body:n.message,tag:`caretrack-${n.id}`})}catch{/* unsupported */}}
   },[notifications]);
 }
-function SoundSettings(){
-  const [sound,setSound]=useState(readPref(SOUND_KEY,'on')),[quiet,setQuiet]=useState(readPref(QUIET_KEY,'on')),[perm,setPerm]=useState(typeof Notification!=='undefined'?Notification.permission:'denied');
+function SoundSettings({user}:{user:AuthUser}){
+  const [sound,setSound]=useState(readPref(SOUND_KEY,'on')),[quiet,setQuiet]=useState(readPref(QUIET_KEY,'on')),[perm,setPerm]=useState<string>(isNativeApp?'loading':typeof Notification!=='undefined'?Notification.permission:'denied');
+  const [wellness,setWellness]=useState(readWellness(user.role)),[exact,setExact]=useState(true);
+  useEffect(()=>{if(!isNativeApp)return;void notificationPermission().then(p=>setPerm(p==='prompt'?'default':p));void exactAlarmsAllowed().then(setExact)},[]);
+  const allow=()=>isNativeApp
+    ?requestNotificationPermission().then(p=>{setPerm(p==='prompt'?'default':p);if(p==='granted'){syncWellnessConfig(user);if(latestDoses.length)void syncNativeDoseReminders(latestDoses)}})
+    :Notification.requestPermission().then(p=>{setPerm(p);if(p==='granted')void registerWellnessSync()});
+  const cycleWellness=()=>{const next:WellnessFrequency=wellness==='normal'?'low':wellness==='low'?'off':'normal';setWellness(next);writePref(WELLNESS_KEY,next);syncWellnessConfig(user);if(next!=='off'&&perm==='default')void allow()};
   return <div className="flex flex-wrap items-center gap-2 border-b border-[#edf2f2] bg-[#f8fbfb] px-4 py-2 text-[11px]">
     <button data-testid="button-toggle-sound" onClick={()=>{const v=sound==='on'?'off':'on';setSound(v);writePref(SOUND_KEY,v);if(v==='on'){lastChime=0;playChime()}}} className={`rounded-full border px-2.5 py-1 font-semibold ${sound==='on'?'border-[#9fcfc9] text-[#2f8a74]':'border-[#dce8e8] text-[#8a989b]'}`}>{sound==='on'?'🔔 Sound on':'🔕 Sound off'}</button>
     <button data-testid="button-toggle-quiet" onClick={()=>{const v=quiet==='on'?'off':'on';setQuiet(v);writePref(QUIET_KEY,v)}} className={`rounded-full border px-2.5 py-1 font-semibold ${quiet==='on'?'border-[#9fcfc9] text-[#2f8a74]':'border-[#dce8e8] text-[#8a989b]'}`}>Quiet 10 PM–7 AM: {quiet}</button>
-    {perm==='default'&&<button onClick={()=>Notification.requestPermission().then(setPerm)} className="rounded-full border border-[#dce8e8] px-2.5 py-1 font-semibold text-[#397d7e]">Allow pop-up alerts</button>}
+    <button data-testid="button-toggle-wellness" title="Hydration reminders, health tips, motivation and quotes between 8 AM and 9 PM. Works offline." onClick={cycleWellness} className={`rounded-full border px-2.5 py-1 font-semibold ${wellness!=='off'?'border-[#9fcfc9] text-[#2f8a74]':'border-[#dce8e8] text-[#8a989b]'}`}>🌱 Wellness tips: {wellness==='off'?'off':wellness==='low'?'2/day':'4/day'}</button>
+    {wellness!=='off'&&perm==='granted'&&<button data-testid="button-preview-wellness" onClick={()=>isNativeApp?void previewNativeWellness(user.name,latestDoses):postToWorker({type:'wellness-preview'})} className="rounded-full border border-[#dce8e8] px-2.5 py-1 font-semibold text-[#397d7e]">Send a tip now</button>}
+    {perm==='default'&&<button data-testid="button-allow-notifications" onClick={allow} className="rounded-full border border-[#dce8e8] px-2.5 py-1 font-semibold text-[#397d7e]">{isNativeApp?'Allow notifications':'Allow pop-up alerts'}</button>}
+    {isNativeApp&&perm==='granted'&&!exact&&<button data-testid="button-exact-alarms" onClick={()=>void openExactAlarmSettings().then(exactAlarmsAllowed).then(setExact)} className="rounded-full border border-[#f0dfb8] px-2.5 py-1 font-semibold text-[#8a6a2a]">Allow exact reminder times</button>}
+    {perm==='denied'&&<span data-testid="text-wellness-blocked" className="text-[#a56a48]">{isNativeApp?'Notifications are turned off for CareTrack in Android Settings › Apps › CareTrack › Notifications.':wellness!=='off'?'Pop-up alerts are blocked in your browser settings, so tips can’t be shown.':''}</span>}
   </div>;
+}
+
+// ---- Wellness tips: local notifications scheduled by the service worker, so they work offline ----
+const WELLNESS_KEY='caretrack-wellness';
+type WellnessFrequency='off'|'low'|'normal';
+/** On by default for patients; care staff can turn it on for themselves. */
+const readWellness=(role:string):WellnessFrequency=>{const fallback=role==='patient'?'normal':'off',v=readPref(WELLNESS_KEY,fallback);return (v==='off'||v==='low'||v==='normal'?v:fallback)};
+const postToWorker=(message:unknown)=>{navigator.serviceWorker?.ready.then(r=>r.active?.postMessage(message)).catch(()=>{/* no service worker */})};
+/** Today's doses as last loaded (Android app), for dose alarms and personalized tips. */
+let latestDoses:Dose[]=[];
+function syncWellnessConfig(user:AuthUser){
+  const frequency=readWellness(user.role);
+  // Android app: tips are scheduled as phone alarms. Browser: the service worker schedules them.
+  if(isNativeApp){void syncNativeWellness({frequency,name:user.name,doses:latestDoses});return}
+  postToWorker({type:'wellness-config',config:{enabled:frequency!=='off',frequency,name:user.name}});
+}
+type PeriodicSyncRegistration=ServiceWorkerRegistration&{periodicSync?:{register:(tag:string,options:{minInterval:number})=>Promise<void>}};
+/** Lets Chrome wake the installed app now and then to deliver tips while it's closed (where supported). */
+async function registerWellnessSync(){
+  try{
+    const reg=await navigator.serviceWorker?.ready as PeriodicSyncRegistration|undefined;
+    if(!reg?.periodicSync)return;
+    const status=await navigator.permissions.query({name:'periodic-background-sync' as PermissionName});
+    if(status.state==='granted')await reg.periodicSync.register('caretrack-wellness',{minInterval:2*60*60*1000});
+  }catch{/* not supported in this browser */}
+}
+/** Sends wellness settings to the service worker and checks for due tips while the app is open. */
+function WellnessNotifications({user}:{user:AuthUser}){
+  // Android app: ask for notification permission once after sign-in, then keep the phone's
+  // scheduled tips up to date whenever today's doses change or the app comes back to the front.
+  useEffect(()=>{
+    if(!isNativeApp)return;
+    let timer=0;
+    const resync=()=>{window.clearTimeout(timer);timer=window.setTimeout(()=>syncWellnessConfig(user),1500)};
+    void (async()=>{
+      if((await notificationPermission())==='prompt'&&readPref('caretrack-asked-notifications','')!=='yes'){writePref('caretrack-asked-notifications','yes');await requestNotificationPermission()}
+      syncWellnessConfig(user);
+    })();
+    const onVisible=()=>{if(!document.hidden)resync()};
+    window.addEventListener('caretrack-doses',resync);document.addEventListener('visibilitychange',onVisible);
+    return()=>{window.clearTimeout(timer);window.removeEventListener('caretrack-doses',resync);document.removeEventListener('visibilitychange',onVisible)};
+  },[user.id,user.name,user.role]);
+  useEffect(()=>{
+    if(isNativeApp)return;
+    syncWellnessConfig(user);
+    void registerWellnessSync();
+    const tick=()=>postToWorker({type:'wellness-tick'});
+    const onVisible=()=>{if(!document.hidden)tick()};
+    const timer=window.setInterval(tick,60_000);
+    document.addEventListener('visibilitychange',onVisible);
+    window.addEventListener('online',tick);
+    return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',onVisible);window.removeEventListener('online',tick)};
+  },[user.id,user.name,user.role]);
+  return null;
 }
 
 // ---- Offline mode: queue dose confirmations, sync when back online ----
@@ -810,7 +946,7 @@ function LabResultsPanel({patientId,canUpload,canReview,category='lab'}:{patient
   const list=(labs.data||[]).filter(l=>l.category===category);
   return <Card testId={rx?'panel-prescription-files':'panel-lab-results'}><div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><div><h2 className="font-bold text-[#254954]">{rx?'Prescription files':'Lab results'}</h2><p className="mt-1 flex items-center gap-1 text-xs text-[#81969b]"><ShieldCheck size={12}/> Files are encrypted and only visible to the care team</p></div>{canUpload&&!open&&<button data-testid="button-open-lab-upload" onClick={()=>setOpen(true)} className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#17647a] px-3 text-xs font-semibold text-white hover:bg-[#125366]"><Plus size={14}/> {rx?'Upload prescription':'Upload result'}</button>}</div>
     {open&&<form onSubmit={submit} className="space-y-3 border-b border-[#eaf0f0] bg-[#f8fbfb] p-5 sm:px-6"><label className="block text-xs font-semibold text-[#526f77]">{rx?'Title':'What test is this?'}<input data-testid="input-lab-title" value={title} onChange={e=>setTitle(e.target.value)} maxLength={120} placeholder={rx?'e.g. Prescription – Oct 28 check-up':'e.g. CBC, Fasting blood sugar'} className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal"/></label><label className="block text-xs font-semibold text-[#526f77]">File (PDF or photo, up to 5 MB)<input data-testid="input-lab-file" type="file" required accept="application/pdf,image/png,image/jpeg,image/webp" capture="environment" onChange={e=>setFile(e.target.files?.[0]||null)} className="mt-1.5 block w-full text-xs"/></label>{error&&<p role="alert" className="text-xs text-red-700">{error}</p>}<div className="flex justify-end gap-2"><button type="button" onClick={()=>setOpen(false)} className="h-9 rounded-lg px-3 text-xs font-semibold text-[#6b8389]">Cancel</button><button data-testid="button-upload-lab" disabled={upload.isPending||!file} className="h-9 rounded-lg bg-[#17647a] px-3 text-xs font-semibold text-white disabled:opacity-50">{upload.isPending?'Uploading…':'Upload'}</button></div></form>}
-    {labs.isLoading?<ListSkeleton/>:list.length===0?<EmptyState title={rx?'No prescription files yet':'No lab results yet'} body={rx?(canUpload?'Upload a scanned or photographed prescription for the patient to view and keep.':'Prescriptions your doctor uploads will appear here.'):canUpload?'Upload a photo or PDF of a laboratory result for the care team to review.':'Lab results uploaded by the patient will appear here.'} icon={FileText}/>:<div className="divide-y divide-[#edf2f2]">{list.map(l=><div key={l.id} data-testid={`row-lab-${l.id}`} className="px-5 py-4 sm:px-6"><div className="flex flex-wrap items-center gap-3"><div className="grid h-9 w-9 place-items-center rounded-lg bg-[#eaf3f5] text-[#477f8e]"><FileText size={16}/></div><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-[#31535e]">{l.title}</div><div className="text-[11px] text-[#81969b]">{l.fileName} · {(l.sizeBytes/1024).toFixed(0)} KB · {l.uploadedByName} · {new Date(l.createdAt).toLocaleDateString()}</div></div><a href={`/api/lab-results/${l.id}/file`} target="_blank" rel="noreferrer" data-testid={`link-lab-file-${l.id}`} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#dce8e8] px-2.5 text-[11px] font-semibold text-[#52747c] hover:bg-[#f4f8f8]"><Download size={13}/>Open</a></div>
+    {labs.isLoading?<ListSkeleton/>:list.length===0?<EmptyState title={rx?'No prescription files yet':'No lab results yet'} body={rx?(canUpload?'Upload a scanned or photographed prescription for the patient to view and keep.':'Prescriptions your doctor uploads will appear here.'):canUpload?'Upload a photo or PDF of a laboratory result for the care team to review.':'Lab results uploaded by the patient will appear here.'} icon={FileText}/>:<div className="divide-y divide-[#edf2f2]">{list.map(l=><div key={l.id} data-testid={`row-lab-${l.id}`} className="px-5 py-4 sm:px-6"><div className="flex flex-wrap items-center gap-3"><div className="grid h-9 w-9 place-items-center rounded-lg bg-[#eaf3f5] text-[#477f8e]"><FileText size={16}/></div><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-[#31535e]">{l.title}</div><div className="text-[11px] text-[#81969b]">{l.fileName} · {(l.sizeBytes/1024).toFixed(0)} KB · {l.uploadedByName} · {new Date(l.createdAt).toLocaleDateString()}</div></div><a href={`/api/lab-results/${l.id}/file`} onClick={nativeDownload(`/api/lab-results/${l.id}/file`,l.fileName)} target="_blank" rel="noreferrer" data-testid={`link-lab-file-${l.id}`} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#dce8e8] px-2.5 text-[11px] font-semibold text-[#52747c] hover:bg-[#f4f8f8]"><Download size={13}/>Open</a></div>
       {rx?null:l.reviewComment?<div className="mt-2 rounded-lg bg-[#eef8f4] px-3 py-2 text-xs text-[#37796b]"><b>{l.reviewedByName}:</b> {l.reviewComment}</div>:canReview?<form onSubmit={e=>{e.preventDefault();const c=(comment[l.id]||'').trim();if(c)review.mutate({id:l.id,data:{comment:c}},{onSuccess:refresh})}} className="mt-2 flex gap-2"><input data-testid={`input-lab-review-${l.id}`} value={comment[l.id]||''} onChange={e=>setComment({...comment,[l.id]:e.target.value})} placeholder="Add your review…" className="h-9 flex-1 rounded-lg border border-input px-3 text-xs"/><button disabled={review.isPending} className="h-9 rounded-lg bg-[#17647a] px-3 text-xs font-semibold text-white">Save review</button></form>:<div className="mt-2 text-[11px] text-[#99702f]">Waiting for the doctor’s review</div>}</div>)}</div>}
   </Card>;
 }
@@ -1137,7 +1273,7 @@ function ReportsPage({user}:{user:AuthUser}){
 }
 function ReportRow({report:r}:{report:Report}){
   const name=r.patientName||'Full care caseload';
-  return <div data-testid={`row-report-${r.id}`} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:px-6"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#eaf3f5] text-[#477f8e]"><FileText size={18}/></div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-bold capitalize text-[#355661]" data-testid={`text-report-period-${r.id}`}>{r.period} report</span><span className="rounded-full bg-[#f0f5f5] px-2 py-0.5 text-[10px] text-[#71898e]">{name}</span></div><div className="mt-1 text-xs text-[#82979b]">{r.rangeStart} – {r.rangeEnd} · Created {new Date(r.createdAt).toLocaleDateString()}</div><p data-testid={`text-report-summary-${r.id}`} className="mt-1 line-clamp-2 text-xs leading-5 text-[#688188]">{r.summary}</p></div><div className="flex items-center gap-2 sm:flex-col sm:items-end"><span className="text-lg font-extrabold text-[#337d7a]" data-testid={`text-report-adherence-${r.id}`}>{Math.round(r.adherenceRate)}%</span><div className="flex gap-1.5"><a href={`/api/reports/${r.id}/pdf`} download data-testid={`link-download-report-pdf-${r.id}`} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#dce8e8] px-2.5 text-[11px] font-semibold text-[#52747c] hover:bg-[#f4f8f8]"><Download size={13}/>PDF</a><a href={`/api/reports/${r.id}/csv`} download data-testid={`link-download-report-csv-${r.id}`} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#dce8e8] px-2.5 text-[11px] font-semibold text-[#52747c] hover:bg-[#f4f8f8]"><Download size={13}/>CSV</a></div></div></div>;
+  return <div data-testid={`row-report-${r.id}`} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:px-6"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#eaf3f5] text-[#477f8e]"><FileText size={18}/></div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-bold capitalize text-[#355661]" data-testid={`text-report-period-${r.id}`}>{r.period} report</span><span className="rounded-full bg-[#f0f5f5] px-2 py-0.5 text-[10px] text-[#71898e]">{name}</span></div><div className="mt-1 text-xs text-[#82979b]">{r.rangeStart} – {r.rangeEnd} · Created {new Date(r.createdAt).toLocaleDateString()}</div><p data-testid={`text-report-summary-${r.id}`} className="mt-1 line-clamp-2 text-xs leading-5 text-[#688188]">{r.summary}</p></div><div className="flex items-center gap-2 sm:flex-col sm:items-end"><span className="text-lg font-extrabold text-[#337d7a]" data-testid={`text-report-adherence-${r.id}`}>{Math.round(r.adherenceRate)}%</span><div className="flex gap-1.5"><a href={`/api/reports/${r.id}/pdf`} onClick={nativeDownload(`/api/reports/${r.id}/pdf`,`caretrack-report-${r.id}.pdf`)} download data-testid={`link-download-report-pdf-${r.id}`} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#dce8e8] px-2.5 text-[11px] font-semibold text-[#52747c] hover:bg-[#f4f8f8]"><Download size={13}/>PDF</a><a href={`/api/reports/${r.id}/csv`} onClick={nativeDownload(`/api/reports/${r.id}/csv`,`caretrack-report-${r.id}.csv`)} download data-testid={`link-download-report-csv-${r.id}`} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#dce8e8] px-2.5 text-[11px] font-semibold text-[#52747c] hover:bg-[#f4f8f8]"><Download size={13}/>CSV</a></div></div></div>;
 }
 function ReportScheduleRow({schedule:s,patients,canManage}:{schedule:ReportSchedule;patients:Patient[];canManage:boolean}){
   const update=useUpdateReportSchedule(),qc=useQueryClient();

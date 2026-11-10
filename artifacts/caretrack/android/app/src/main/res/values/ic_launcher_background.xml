@@ -1,0 +1,6 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- CareTrack brand navy (same as the web sidebar). -->
+    <color name="ic_launcher_background">#174353</color>
+    <color name="caretrack_navy">#174353</color>
+</resources>

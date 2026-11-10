@@ -9,6 +9,7 @@
     "test": "vitest run",
     "build": "pnpm run typecheck && pnpm run test && pnpm -r --if-present run build",
     "start": "pnpm --filter @workspace/api-server run start",
+    "android:apk": "pnpm --filter @workspace/caretrack run android:apk",
     "db:push": "pnpm --filter @workspace/db run push",
     "db:seed": "pnpm --filter @workspace/api-server run seed",
     "typecheck:libs": "tsc --build",

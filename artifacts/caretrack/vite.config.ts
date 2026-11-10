@@ -17,6 +17,11 @@ const apiTarget = `http://localhost:${env.PORT ?? 8080}`;
 export default defineConfig({
   base: env.BASE_PATH ?? '/',
   plugins: [react(), tailwindcss()],
+  define: {
+    // Android app only: the public HTTPS address of the CareTrack server (not a secret).
+    // When empty, the app asks for it on first launch. The web version ignores it.
+    'import.meta.env.VITE_CARETRACK_API_URL': JSON.stringify(env.CARETRACK_API_URL ?? ''),
+  },
   resolve: {
     alias: {
       '@': path.resolve(import.meta.dirname, 'src'),

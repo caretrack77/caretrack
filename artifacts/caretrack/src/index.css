@@ -484,3 +484,23 @@ h1,h2,h3,h4 { font-family: 'Manrope', sans-serif; letter-spacing: -0.035em; }
   .print-area { position: absolute; inset: 0 auto auto 0; width: 100%; box-shadow: none; border: 0; }
   .no-print { display: none !important; }
 }
+
+/* ---- Phones and tablets (Android app and mobile browsers) ----
+   Desktop (mouse) layouts are untouched: these rules only apply to small or touch screens. */
+html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
+@media (max-width: 640px) {
+  /* Never scroll sideways. `clip` (not `hidden`) keeps the sticky header working. */
+  html, body { overflow-x: clip; }
+  /* Long words, emails and IDs wrap instead of pushing the page wider. */
+  main { overflow-wrap: anywhere; }
+}
+@media (pointer: coarse) {
+  button, a, [role="button"], input, select, textarea, label { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
+  /* Comfortable tap sizes for the smallest controls (about 40-44 px). */
+  input:not([type="checkbox"]):not([type="radio"]):not([type="range"]), select { min-height: 44px; }
+  input[type="checkbox"], input[type="radio"] { width: 20px; height: 20px; }
+  button.h-8, a.h-8 { height: 2.5rem; }
+  button.h-9, a.h-9 { height: 2.75rem; }
+  button.w-9 { width: 2.75rem; }
+  button.rounded-full.py-1 { min-height: 36px; }
+}

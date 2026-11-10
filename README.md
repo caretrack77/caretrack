@@ -6,7 +6,7 @@ CareTrack helps patients, caregivers, and doctors coordinate medication schedule
 
 ## What is new
 
-The recent implementation work extended the original adherence tracker with health-aware risk prediction and reports, patient health recording, caregiver recording permissions, guarded chatbot answers, mobile/offline support, and authenticated live updates. The feature walkthrough below explains the user experience and the data flow; the change log records the corresponding implementation areas and how to demonstrate them.
+The recent implementation work extended the original adherence tracker with health-aware risk prediction and reports, patient health recording, caregiver recording permissions, guarded chatbot answers, mobile/offline support, and authenticated live updates. CareTrack now also ships as a native **Android app (APK)** built with Capacitor, with on-device medication reminders and wellness tips that fire offline and with the app closed. The feature walkthrough below explains the user experience and the data flow; the change log records the corresponding implementation areas and how to demonstrate them.
 
 ## Technology and architecture
 
@@ -15,11 +15,12 @@ The recent implementation work extended the original adherence tracker with heal
 | Web app | React 19, Vite, Tailwind CSS, Recharts, TanStack Query, Wouter |
 | API | Node.js, Express 5, TypeScript |
 | Database | PostgreSQL (Supabase) with Drizzle ORM |
-| Authentication | HTTP-only session cookies, bcrypt password hashes, role and patient-access checks |
+| Authentication | HTTP-only session cookies (web) or bearer session tokens (Android app), bcrypt password hashes, role and patient-access checks |
 | AI | Custom TypeScript Random Forest, optional Anthropic Claude insights, optional Groq chatbot |
 | Reports | PDFKit PDF and CSV export |
 | API contract | OpenAPI 3.1, generated React Query client and Zod validators (Orval) |
 | Offline support | Installable PWA, service worker, IndexedDB schedule cache and offline dose queue |
+| Android app | Capacitor 8 (Android), Local Notifications, Preferences, Filesystem/Share, Splash Screen |
 
 ```text
 artifacts/
@@ -31,7 +32,12 @@ artifacts/
     scripts/seed.mjs   Fictional demo data
   caretrack/
     src/App.tsx        React app, pages and user flows
+    src/native.ts      Android (Capacitor) runtime: server address, token storage
+    src/native-notifications.ts  On-device medication reminders and tips
     public/sw.js       PWA service worker and offline reminder support
+    public/wellness.js Shared wellness-tip content
+    android/           Capacitor Android project (Gradle)
+    capacitor.config.ts
 lib/
   db/                  Drizzle schema and PostgreSQL connection
   api-spec/            OpenAPI contract and code generation config
@@ -39,6 +45,7 @@ lib/
   api-zod/             Generated request/response validators
 docs/
   ALIGNMENT.md         Requirement status, evidence plan and paper notes
+  ANDROID.md           Building, installing and testing the Android APK
   evidence/            Manual offline/realtime test steps
 ```
 
@@ -70,6 +77,8 @@ docs/
 | `DATABASE_URL` | Yes | PostgreSQL/Supabase connection string |
 | `SESSION_SECRET` | Yes | Secret used by session authentication |
 | `PORT`, `WEB_PORT` | No | API and web development ports (8080 and 5173 by default) |
+| `CORS_ORIGIN` | No | Comma-separated web origins allowed to call the API with cookies. The Android app origin is always allowed, without cookies. |
+| `CARETRACK_API_URL` | No | Public HTTPS server address baked into the APK at build time; if empty, the app asks on first launch |
 | `ANTHROPIC_API_KEY` | No | Enables Claude-generated insights; rule-based insights remain available without it |
 | `GROQ_API_KEY`, `GROQ_MODEL` | No | Enables guarded Groq chatbot replies; model defaults to `llama-3.3-70b-versatile` |
 | `OTP_ENABLED` | No | Enables the second login step; enabled in the example configuration |
@@ -89,6 +98,22 @@ pnpm start
 ```
 
 The production server listens on `PORT` (8080 by default) and serves the API and built web app. Configure HTTPS at the hosting/reverse-proxy layer. Database availability, backups, and service uptime depend on the selected hosting providers.
+
+### Android app (APK)
+
+The same app is packaged for Android with Capacitor (`artifacts/caretrack/android`). It uses the same API
+and database as the website, signs in with a bearer token instead of a cookie, and schedules medication
+reminders and wellness tips as on-device Android notifications that work offline and with the app closed.
+
+```bash
+pnpm android:apk                                       # signed release APK (needs android/keystore.properties)
+pnpm --filter @workspace/caretrack run android:apk:debug   # debug APK, no signing setup
+pnpm --filter @workspace/caretrack run android:open        # open the project in Android Studio
+```
+
+Requires Android Studio (bundled JDK 21, Android SDK 36). Release signing uses `android/keystore.properties` (copy
+`keystore.properties.example`; the real file and keystore are git-ignored). See [docs/ANDROID.md](docs/ANDROID.md)
+for building, server setup, installation and testing.
 
 ## Demo accounts
 
@@ -199,6 +224,7 @@ This log records additions reflected in the current source, not items that remai
 | Offline schedule reminders and dose synchronization | `artifacts/caretrack/public/sw.js`; `artifacts/caretrack/src/App.tsx`; `docs/evidence/OFFLINE_REALTIME_MANUAL.md` | Follow the offline manual: cache the schedule, disconnect, log a dose, reconnect, and confirm the preserved timestamp syncs. |
 | Medical-history, consultation, prescription, and record-history API routes | `artifacts/api-server/src/routes/clinical.ts`; `artifacts/api-server/src/routes/medications.ts`; `lib/db/src/schema/caretrack.ts` | Exercise documented authenticated routes with an assigned patient; inspect the record-history endpoint as a doctor/admin. Full UI/entity coverage remains incomplete. |
 | Rate limits, privacy consent, security headers, and production-safe OTP behavior | `artifacts/api-server/src/lib/auth.ts`; middleware; `artifacts/api-server/src/lib/security.test.ts`; `.env.example` | Accept the privacy notice on first use; review response headers and rate-limit behavior in a local test deployment. |
+| Native Android app with on-device reminders and bearer-token sign-in | `artifacts/caretrack/android/`; `artifacts/caretrack/capacitor.config.ts`; `artifacts/caretrack/src/native.ts`; `artifacts/caretrack/src/native-notifications.ts`; `artifacts/api-server/src/lib/auth.ts`; `artifacts/api-server/src/app.ts`; `docs/ANDROID.md` | Build and install the APK, sign in as Alex, then put the phone in airplane mode and wait for a scheduled dose reminder with the app closed. |
 | Future-date checks and mobile-only patient/caregiver policy | API date validation and authentication; `artifacts/caretrack/public/manifest.webmanifest` | Try a patient/caregiver session on a physical phone, Android emulator, or browser device emulation; desktop sign-in is intentionally rejected. |
 
 ## Already implemented (verified, not new in this change log)
@@ -223,6 +249,7 @@ This log records additions reflected in the current source, not items that remai
 | `pnpm test` | Run the automated tests |
 | `pnpm build` | Typecheck, run tests, and build workspace packages |
 | `pnpm start` | Start the production API/static app server |
+| `pnpm android:apk` | Build the web app, sync it into Capacitor, and assemble a release APK |
 | `pnpm --filter @workspace/api-spec run codegen` | Regenerate API clients/validators after an OpenAPI change |
 
 ## Requirements traceability
@@ -250,7 +277,7 @@ Statuses indicate implementation evidence in this repository; “Partial” mean
 | NFR2 | Secure authentication, access control, encryption | Done (added by us) | Rate limits, consent gate, role/patient checks, secure sessions, encrypted content; deployment review remains necessary. |
 | NFR3 | HTTPS between components and cloud services | Partial | Production is HTTPS-ready, but actual TLS configuration depends on deployment/hosting and must be checked there. |
 | NFR4 | Role-based access for patients, doctors, caregivers, admins | Done (already existed) | API and UI access rules for all four product roles. |
-| NFR5 | Reliable offline medication reminders without internet | Partial | Cached schedule, local reminders and in-app alarm work where supported; browser/OS cannot guarantee closed-app alarms. |
+| NFR5 | Reliable offline medication reminders without internet | Partial | Android APK schedules on-device reminders that fire offline and with the app closed; the PWA path still depends on browser/OS support. Device-level evidence is not yet recorded. |
 | NFR6 | Sync locally recorded data to the cloud when back online | Done (added by us) | Offline dose queue syncs with original confirmation timestamps; follow the manual evidence steps. |
 | NFR7 | Doctor-patient messages in near real time | Done (added by us) | Authenticated SSE with polling fallback; caregiver send remains forbidden. |
 | NFR8 | Chatbot responds only to medication, health-info, system questions | Done (already existed) | Topic/safety guards, fixed refusals, verified-data answers, and output filtering. |
@@ -261,8 +288,8 @@ Statuses indicate implementation evidence in this repository; “Partial” mean
 
 ## Known limitations
 
-- This is a responsive installable PWA, not a verified native Android APK. Patients and caregivers are blocked from desktop sign-in. Demonstrate on a physical phone, Android emulator, or browser device emulation; do not bypass the production policy.
-- Local reminders and offline sync depend on browser support and permissions. Closed-app alarm delivery is not guaranteed by the PWA.
+- An Android APK is available (see [docs/ANDROID.md](docs/ANDROID.md)); it needs the API deployed over HTTPS. Patients and caregivers are blocked from desktop sign-in. Demonstrate on a physical phone, Android emulator, or browser device emulation; do not bypass the production policy.
+- In the browser/PWA, local reminders and offline sync depend on browser support and permissions, and closed-app alarm delivery is not guaranteed. Use the Android APK for reliable closed-app reminders (still subject to Android notification and battery-optimization settings).
 - Reminder escalation settings have database defaults, but the staged repeat/caregiver/doctor escalation is not implemented end to end.
 - Medical-history, consultation, prescription, and record-history API/schema work exists, but UI integration and consistent history/soft-delete behavior across every clinical entity still need verification.
 - Mobile usability evidence at every target width and a larger-data Random Forest performance benchmark have not been recorded.

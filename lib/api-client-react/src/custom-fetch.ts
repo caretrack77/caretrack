@@ -17,6 +17,34 @@ const DEFAULT_JSON_ACCEPT = "application/json, application/problem+json";
 
 let _baseUrl: string | null = null;
 let _authTokenGetter: AuthTokenGetter | null = null;
+let _defaultHeaders: Record<string, string> = {};
+let _sessionTokenListener: ((token: string) => void) | null = null;
+const SESSION_HEADER = "x-caretrack-session";
+
+/** Headers sent with every request (e.g. `x-caretrack-client` from the Android app). */
+export function setDefaultHeaders(headers: Record<string, string>): void {
+  _defaultHeaders = { ...headers };
+}
+
+/**
+ * Called with a new session token when the server issues one in the
+ * `x-caretrack-session` response header (only sent to the Android app).
+ */
+export function setSessionTokenListener(listener: ((token: string) => void) | null): void {
+  _sessionTokenListener = listener;
+}
+
+/**
+ * The absolute URL and headers (client + bearer token) for a raw API request,
+ * for things the generated hooks can't do, such as streaming or file downloads.
+ */
+export async function apiRequest(path: string): Promise<{ url: string; headers: Headers }> {
+  const url = String(applyBaseUrl(path));
+  const headers = mergeHeaders(_defaultHeaders);
+  const token = _authTokenGetter ? await _authTokenGetter() : null;
+  if (token) headers.set("authorization", `Bearer ${token}`);
+  return { url, headers };
+}
 
 /**
  * Set a base URL that is prepended to every relative request URL
@@ -335,7 +363,7 @@ export async function customFetch<T = unknown>(
     throw new TypeError(`customFetch: ${method} requests cannot have a body.`);
   }
 
-  const headers = mergeHeaders(isRequest(input) ? input.headers : undefined, headersInit);
+  const headers = mergeHeaders(_defaultHeaders, isRequest(input) ? input.headers : undefined, headersInit);
   if (!headers.has("x-caretrack-client") && typeof navigator === "undefined") {
     headers.set("x-caretrack-client", "mobile-app");
   }
@@ -364,6 +392,8 @@ export async function customFetch<T = unknown>(
   const requestInfo = { method, url: resolveUrl(input) };
 
   const response = await fetch(input, { ...init, method, headers });
+  const issuedToken = response.headers.get(SESSION_HEADER);
+  if (issuedToken && _sessionTokenListener) _sessionTokenListener(issuedToken);
 
   if (!response.ok) {
     const errorData = await parseErrorBody(response, method);
