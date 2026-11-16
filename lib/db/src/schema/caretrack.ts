@@ -666,3 +666,23 @@ export const healthMetricRangesTable = pgTable(
   },
   (table) => [uniqueIndex("caretrack_health_ranges_patient_type_idx").on(table.patientId, table.metricType)],
 );
+
+/**
+ * Offline sync: one row per client-generated `Idempotency-Key`. A change saved on a device
+ * while offline may be sent more than once (lost response, retry after reconnect, app
+ * restart); the stored response is replayed so the record is never created twice.
+ */
+export const idempotencyKeysTable = pgTable(
+  "caretrack_idempotency_keys",
+  {
+    key: text("key").primaryKey(),
+    userId: integer("user_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+    method: text("method").notNull(),
+    path: text("path").notNull(),
+    // Null while the first request is still being processed.
+    statusCode: integer("status_code"),
+    response: jsonb("response"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [index("caretrack_idempotency_keys_created_idx").on(table.createdAt)],
+);

@@ -22,7 +22,12 @@ const BUILT_IN_SERVER = normalizeServerUrl(import.meta.env.VITE_CARETRACK_API_UR
 let serverUrl: string | null = null;
 let sessionToken: string | null = null;
 
-/** "caretrack.example.com" or "https://caretrack.example.com/api/" -> "https://caretrack.example.com". HTTPS only. */
+/**
+ * "caretrack.example.com", "https://caretrack.example.com/api/" or an address copied from the
+ * browser such as "https://caretrack.example.com/login" -> "https://caretrack.example.com".
+ * The CareTrack API always lives at /api on the server's root, so any page path is dropped
+ * (keeping it made the connection check fail with "not a CareTrack server"). HTTPS only.
+ */
 export function normalizeServerUrl(input: string): string | null {
   let value = input.trim();
   if (!value) return null;
@@ -30,8 +35,7 @@ export function normalizeServerUrl(input: string): string | null {
   try {
     const url = new URL(value);
     if (url.protocol !== 'https:' || !url.hostname) return null;
-    const path = url.pathname.replace(/\/+$/, '').replace(/\/api$/, '');
-    return `${url.origin}${path}`;
+    return url.origin;
   } catch {
     return null;
   }
@@ -42,7 +46,11 @@ export async function initNative(): Promise<void> {
   if (!isNativeApp) return;
   setDefaultHeaders({ 'x-caretrack-client': 'android-app' });
   const [savedServer, savedToken] = await Promise.all([Preferences.get({ key: SERVER_KEY }), Preferences.get({ key: TOKEN_KEY })]);
-  serverUrl = normalizeServerUrl(savedServer.value || '') || BUILT_IN_SERVER;
+  // A temporary tunnel address saved by an older install (*.trycloudflare.com) stops working
+  // when the tunnel closes; when this build has a permanent address built in, use that instead.
+  const saved = normalizeServerUrl(savedServer.value || '');
+  const temporary = !!saved && /\.trycloudflare\.com$/i.test(new URL(saved).hostname);
+  serverUrl = (BUILT_IN_SERVER && temporary ? null : saved) || BUILT_IN_SERVER;
   sessionToken = savedToken.value || null;
   if (serverUrl) setBaseUrl(serverUrl);
   setAuthTokenGetter(() => sessionToken);
@@ -74,7 +82,7 @@ export async function testServer(url: string): Promise<string | null> {
     clearTimeout(timer);
     if (!response.ok) return `The server answered with an error (${response.status}).`;
     const body = await response.json().catch(() => null) as { status?: string } | null;
-    return body?.status === 'ok' ? null : 'That address is not a CareTrack server.';
+    return body?.status === 'ok' ? null : 'That address opened a web page, but not the CareTrack server. Enter only the address (for example caretrack.example.com), without /login or other pages, and make sure the CareTrack server is running.';
   } catch {
     return navigator.onLine ? 'Could not reach that server. Check the address and that it uses HTTPS.' : 'You are offline. Connect to the internet and try again.';
   }

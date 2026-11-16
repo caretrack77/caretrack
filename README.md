@@ -19,7 +19,7 @@ The recent implementation work extended the original adherence tracker with heal
 | AI | Custom TypeScript Random Forest, optional Anthropic Claude insights, optional Groq chatbot |
 | Reports | PDFKit PDF and CSV export |
 | API contract | OpenAPI 3.1, generated React Query client and Zod validators (Orval) |
-| Offline support | Installable PWA, service worker, IndexedDB schedule cache and offline dose queue |
+| Offline support | Installable PWA; IndexedDB saved data and outbox with automatic sync, idempotency keys and conflict checks (`src/offline.ts`) |
 | Android app | Capacitor 8 (Android), Local Notifications, Preferences, Filesystem/Share, Splash Screen |
 
 ```text
@@ -32,6 +32,7 @@ artifacts/
     scripts/seed.mjs   Fictional demo data
   caretrack/
     src/App.tsx        React app, pages and user flows
+    src/offline.ts     Offline mode: saved data, outbox, automatic sync (web and app)
     src/native.ts      Android (Capacitor) runtime: server address, token storage
     src/native-notifications.ts  On-device medication reminders and tips
     public/sw.js       PWA service worker and offline reminder support
@@ -97,7 +98,7 @@ pnpm build
 pnpm start
 ```
 
-The production server listens on `PORT` (8080 by default) and serves the API and built web app. Configure HTTPS at the hosting/reverse-proxy layer. Database availability, backups, and service uptime depend on the selected hosting providers.
+The production server listens on `PORT` (8080 by default) and serves the API and built web app. To host it for free with a permanent HTTPS address (so the Android app works without a laptop), follow [docs/DEPLOY.md](docs/DEPLOY.md) (Render blueprint in `render.yaml`). Configure HTTPS at the hosting/reverse-proxy layer. Database availability, backups, and service uptime depend on the selected hosting providers.
 
 ### Android app (APK)
 
@@ -117,15 +118,15 @@ for building, server setup, installation and testing.
 
 ## Demo accounts
 
-All demo accounts use **`caretrack-demo`** as their initial password. New users must change temporary passwords when prompted. Patient and caregiver accounts are blocked on desktop browsers: use a physical phone, Android emulator, or browser device emulation for the defense demonstration. Keep this policy enabled in production.
+All demo accounts use **`demo1234`** as their password. When two-step login is on, their one-time code is shown on the sign-in screen (it is never emailed: `caretrack.com` is not our domain). New users must change temporary passwords when prompted. Patient and caregiver accounts are blocked on desktop browsers: use a physical phone, Android emulator, or browser device emulation for the defense demonstration. Keep this policy enabled in production.
 
 | Role | Email | Demo scope |
 |---|---|---|
-| Admin | `admin@caretrack.demo` | User/team management, all patients, audit activity |
-| Doctor | `provider@caretrack.demo` | Dr. Mira Santos and five assigned patients |
-| Doctor | `doctor2@caretrack.demo` | Dr. Joel Reyes and five assigned patients; also covers Dr. Mira Santos's patients in the seed |
-| Patient | `patient@caretrack.demo` | Alex Morgan's own schedule and health/adherence views; mobile browser only |
-| Caregiver | `caregiver@caretrack.demo` | Jordan Morgan's linked-patient support; mobile browser only |
+| Admin | `admin@caretrack.com` | User/team management, all patients, audit activity |
+| Doctor | `doctor@caretrack.com` | Dr. Mira Santos and five assigned patients |
+| Doctor | `doctor2@caretrack.com` | Dr. Joel Reyes and five assigned patients; also covers Dr. Mira Santos's patients in the seed |
+| Patient | `patient@caretrack.com` | Alex Morgan's own schedule and health/adherence views; mobile browser only |
+| Caregiver | `caregiver@caretrack.com` | Jordan Morgan's linked-patient support; mobile browser only |
 
 The database/API retains the internal role identifier `provider` for doctors. Product-facing roles are Admin, Doctor, Patient, and Caregiver.
 
@@ -185,10 +186,13 @@ Groq is optional. When it is not configured, fails, or times out, built-in sched
 - Messages are encrypted at rest with AES-256-GCM. API access checks remain in force when messages are read or sent.
 - An authenticated, role-scoped Server-Sent Events stream signals new messages and notifications to active clients. React Query polling remains a fallback if the stream disconnects.
 
-### Offline PWA reminders and dose sync
+### Offline mode and automatic sync (web and Android app)
 
-- When online, the app caches upcoming schedule data in IndexedDB. Where browser and OS permissions permit, the service worker schedules Notifications API reminders; while the app is open, it can also show an in-app alarm/chime.
-- Dose confirmations made offline are queued locally with their original timestamps. On reconnect, the app syncs the queue and reports offline, syncing, and synced states.
+- Previously loaded information stays available offline: API responses are saved per user in IndexedDB and shown when the server can't be reached, with a banner saying when they were last updated.
+- Dose status changes, health readings, symptom notes and messages work offline. They are saved on the device first, appear immediately with a *Pending sync* marker, survive refreshes and app restarts, and upload automatically when the connection returns. The header shows Online / Offline / Syncing / N pending / Needs attention.
+- Retries never duplicate records (each change has an `Idempotency-Key`; the server replays the first result). Doses and readings keep the time they were entered offline. An offline dose change that is older than a newer change made elsewhere is not applied; the user chooses which to keep.
+- Sign-in, file downloads, reports, AI features, administration and profile/medication editing need a connection and say so. Signing out removes saved data from the device; changes not yet uploaded stay for that user until their next sign-in.
+- When online, the app also caches upcoming schedule data for reminders. Where browser and OS permissions permit, the service worker schedules Notifications API reminders; while the app is open, it can also show an in-app alarm/chime.
 - The PWA is installable from a supported mobile browser, but closed-app notifications and alarms depend on browser, OS, power-saving, and permission settings. This is not a guarantee of native background execution.
 - Step-by-step manual checks are in [Offline and real-time evidence](docs/evidence/OFFLINE_REALTIME_MANUAL.md).
 

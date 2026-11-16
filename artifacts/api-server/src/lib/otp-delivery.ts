@@ -48,8 +48,21 @@ export function toInternational(phone: string): string {
 
 let transporter: ReturnType<typeof nodemailer.createTransport> | null = null;
 
-/** Demo and reserved domains (e.g. admin@caretrack.demo) can't receive mail. */
+/**
+ * The seeded demo accounts (scripts/seed.mjs). caretrack.com is a real domain we don't own, so
+ * their login codes must never be emailed; the sign-in screen shows the code instead.
+ */
+const DEMO_ACCOUNT_EMAILS = new Set([
+  "admin@caretrack.com",
+  "doctor@caretrack.com",
+  "doctor2@caretrack.com",
+  "patient@caretrack.com",
+  "caregiver@caretrack.com",
+]);
+
+/** Demo accounts and reserved domains (e.g. name@caretrack.test) can't receive mail. */
 export function undeliverableEmail(address: string): boolean {
+  if (DEMO_ACCOUNT_EMAILS.has(address.trim().toLowerCase())) return true;
   return /\.(demo|test|example|invalid|localhost|local)$/i.test(address.split("@")[1] ?? "");
 }
 

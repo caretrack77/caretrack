@@ -1,4 +1,4 @@
-import { and, asc, eq, gt, gte, inArray, lt, lte } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, lt, lte } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
   CreateDemoDoseBody,
@@ -9,7 +9,8 @@ import {
   UpdateDoseStatusParams,
   UpdateDoseStatusResponse,
 } from "@workspace/api-zod";
-import { db, doseLogsTable, medicationsTable } from "@workspace/db";
+import { auditLogsTable, db, doseLogsTable, medicationsTable } from "@workspace/db";
+import { capturedAt } from "../lib/offline-capture";
 import { authenticate, currentUser, requireRoles, requireUser } from "../lib/auth";
 import { writeAuditLog } from "../lib/audit";
 import { canAccessPatient, canManagePatient, getVisiblePatientIds } from "../lib/patient-access";
@@ -105,10 +106,49 @@ router.patch("/doses/:id/status", async (req, res): Promise<void> => {
     res.status(404).json({ error: "Dose not found." });
     return;
   }
+  // A dose logged while the device was offline arrives later; judge it by when it was logged.
+  const captured = capturedAt(req);
+  if (captured && "error" in captured) {
+    res.status(400).json({ error: captured.error });
+    return;
+  }
+  const actionTime = captured?.at ?? new Date();
+  // Offline changes must not overwrite a newer change made elsewhere (another device, the
+  // caregiver or the doctor). The newest human change wins; system "missed" marking does
+  // not count, so a dose taken offline still replaces an automatic "missed".
+  if (captured) {
+    const [latest] = await db
+      .select({ createdAt: auditLogsTable.createdAt, details: auditLogsTable.details })
+      .from(auditLogsTable)
+      .where(and(eq(auditLogsTable.entityType, "dose"), eq(auditLogsTable.entityId, existing.id), eq(auditLogsTable.action, "dose_logged")))
+      .orderBy(desc(auditLogsTable.createdAt))
+      .limit(1);
+    const latestDetails = (latest?.details ?? {}) as { capturedAt?: string; status?: string };
+    const latestAt = latest ? new Date(latestDetails.capturedAt ?? latest.createdAt).getTime() : 0;
+    if (latest && latestAt > actionTime.getTime()) {
+      const [medication] = await db
+        .select({ name: medicationsTable.name, dosage: medicationsTable.dosage })
+        .from(medicationsTable)
+        .where(eq(medicationsTable.id, existing.medicationId))
+        .limit(1);
+      const current = serializeDose(existing, medication?.name ?? "Medication", medication?.dosage ?? "");
+      if (existing.status === parsed.data.status) {
+        // Same outcome already recorded by the newer change: nothing to do.
+        res.json(UpdateDoseStatusResponse.parse(current));
+        return;
+      }
+      res.status(409).json({
+        error: `This dose was changed to "${existing.status}" after you logged it on this device. The newer change was kept.`,
+        code: "SYNC_CONFLICT",
+        current,
+      });
+      return;
+    }
+  }
   // Patients may only log doses close to their scheduled time, so the record can't be
   // tidied up days later. Doctors and admins can still correct any dose.
   if (user.role === "patient") {
-    const offset = Date.now() - existing.scheduledTime.getTime();
+    const offset = actionTime.getTime() - existing.scheduledTime.getTime();
     if (offset > PATIENT_CORRECTION_WINDOW_MS) {
       res.status(403).json({
         error: "This dose is more than 24 hours old. Ask your care team if it needs to be corrected.",
@@ -122,7 +162,7 @@ router.patch("/doses/:id/status", async (req, res): Promise<void> => {
   }
   const correctedLate = parsed.data.status === "taken" && existing.status === "missed";
   // Offline-logged doses are synced later; keep the time the patient actually tapped "taken".
-  let takenTime = new Date();
+  let takenTime = actionTime;
   if (parsed.data.takenAt) {
     const at = new Date(parsed.data.takenAt);
     if (!Number.isNaN(at.getTime()) && at.getTime() <= Date.now() && at.getTime() >= existing.scheduledTime.getTime() - 2 * 60 * 60 * 1000) {
@@ -153,6 +193,9 @@ router.patch("/doses/:id/status", async (req, res): Promise<void> => {
     status: dose.status,
     previousStatus: existing.status,
     ...(correctedLate ? { late: true } : {}),
+    // When the change was made (on the device, for offline changes); used for conflict checks.
+    capturedAt: actionTime.toISOString(),
+    ...(captured ? { offline: true } : {}),
   });
   if (dose.status === "missed" || dose.status === "skipped") {
     await notifyProvidersForLowAdherence(dose.patientId);

@@ -45,10 +45,12 @@ Notifications), so users can mute tips without muting medication reminders.
 
 ## Offline
 
-- Pages and recently loaded data are cached by the existing service worker (it now also caches the
-  API responses from the configured server), so the app opens and shows saved information offline.
-- Doses logged offline are queued with their original time and synced automatically when the
-  connection returns (same queue as the website). The offline banner shows the status.
+- The screens are inside the APK. Data loaded while online is saved per user in the app's IndexedDB
+  (`src/offline.ts`, same code as the website), so the app opens and shows saved information offline,
+  also after being force-closed.
+- Dose updates, health readings, symptom notes and messages entered offline are saved on the phone,
+  marked *Pending sync*, and uploaded automatically when Wi-Fi or mobile data returns (no button to
+  press). Retries never create duplicates. See docs/evidence/OFFLINE_REALTIME_MANUAL.md.
 - Live updates reconnect automatically after a drop.
 - Reports and lab files need a connection to download.
 
@@ -105,6 +107,6 @@ Updating: install a newer APK over the old one (same signing key); data and sign
 | Login / logout per role | Patient, caregiver (allowed only in the app), doctor, admin; sign out returns to sign-in |
 | Sync with web | Log a dose on the phone → it shows as taken on the website, and vice versa |
 | Notifications | Notification panel → "Send a tip now". As a doctor, give the patient a dose a few minutes ahead; on the patient phone open Today's doses once, then close the app and turn on airplane mode — the reminder still appears on time |
-| Offline | Airplane mode → app opens with saved data; log a dose → turn data back on → "synced" banner |
+| Offline | Wi-Fi and data off → force-close and reopen the app → saved data shows; log a dose and a reading → reopen again → still *Pending sync* → turn data back on → "saved to CareTrack" banner, records on the website |
 | Downloads | Reports page → PDF/CSV opens the Android share sheet |
 | Back button | Opens/closes the menu, goes back between pages, leaves the app on the first page |

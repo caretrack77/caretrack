@@ -10,6 +10,7 @@ import {
 import { createReport } from "./report-service";
 import { trainAndPredict } from "./ml/risk-model";
 import { sendAppointmentReminders } from "../routes/care";
+import { pruneIdempotencyKeys } from "./idempotency";
 
 // The Random Forest risk model is retrained on fresh data every 6 hours.
 const MODEL_RETRAIN_MS = 6 * 60 * 60 * 1000;
@@ -91,6 +92,7 @@ export function runJobCycle(): Promise<JobCycleResult> {
       const missed = await markOverdueDoses();
       const reports = await runDueReportSchedules();
       await sendAppointmentReminders();
+      await pruneIdempotencyKeys().catch((err) => logger.warn({ err }, "Pruning offline-sync keys failed"));
       if (Date.now() - lastModelTraining > MODEL_RETRAIN_MS) {
         lastModelTraining = Date.now();
         await trainAndPredict().catch((err) => logger.warn({ err }, "Risk model training failed"));

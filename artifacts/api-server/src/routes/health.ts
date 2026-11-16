@@ -1,5 +1,5 @@
 import { and, desc, eq } from "drizzle-orm";
-import { Router, type IRouter } from "express";
+import { Router, type IRouter, type Request } from "express";
 import { z } from "zod";
 import { HealthCheckResponse } from "@workspace/api-zod";
 import { db, healthLogsTable, healthMetricRangesTable, healthMetricsTable, notificationsTable } from "@workspace/db";
@@ -9,6 +9,7 @@ import { writeAuditLog } from "../lib/audit";
 import { careTeamProviderIds } from "../lib/coverage";
 import { patientSideUsers } from "../lib/notifications";
 import { manilaDate } from "../lib/dose-scheduler";
+import { capturedAt } from "../lib/offline-capture";
 import { DEFAULT_HEALTH_RANGES, healthReadingIsOutOfRange } from "../lib/health-ranges";
 
 const router: IRouter = Router();
@@ -33,6 +34,20 @@ const healthLogInput = z.object({
   recordedAt: z.string().datetime().optional(),
 });
 
+/**
+ * Readings can't be back-dated to an earlier day. An entry saved on a device while offline
+ * is synced later, so it is compared with the day it was captured on the device instead.
+ */
+function recordedAtProblem(req: Request, recordedAt: string | undefined): string | null {
+  const captured = capturedAt(req);
+  if (captured && "error" in captured) return captured.error;
+  if (!recordedAt) return null;
+  const at = new Date(recordedAt);
+  if (at.getTime() > Date.now() + 5 * 60 * 1000) return "Health records cannot have a future time.";
+  if (manilaDate(at) < manilaDate(captured?.at ?? new Date())) return "Health records cannot be recorded with a past date.";
+  return null;
+}
+
 router.use("/patients/:patientId/health-metrics", authenticate, requireUser);
 router.use("/patients/:patientId/health-logs", authenticate, requireUser);
 
@@ -50,10 +65,8 @@ router.post("/patients/:patientId/health-metrics", async (req, res) => {
   if (!(await canManagePatient(user, patientId))) { res.status(403).json({ error: "Not allowed to record health metrics for this patient." }); return; }
   const parsed = metricInput.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  if (parsed.data.recordedAt && manilaDate(new Date(parsed.data.recordedAt)) < manilaDate()) {
-    res.status(400).json({ error: "Health measurements cannot be recorded with a past date." });
-    return;
-  }
+  const dateProblem = recordedAtProblem(req, parsed.data.recordedAt);
+  if (dateProblem) { res.status(400).json({ error: dateProblem }); return; }
   const [range] = await db.select().from(healthMetricRangesTable).where(and(eq(healthMetricRangesTable.patientId, patientId), eq(healthMetricRangesTable.metricType, parsed.data.metricType))).limit(1);
   const defaults = DEFAULT_HEALTH_RANGES;
   const [defaultMin, defaultMax] = defaults[parsed.data.metricType];
@@ -99,10 +112,8 @@ router.post("/patients/:patientId/health-logs", async (req, res) => {
   if (!(await canManagePatient(user, patientId))) { res.status(403).json({ error: "Not allowed to record health observations for this patient." }); return; }
   const parsed = healthLogInput.safeParse(req.body);
   if (!parsed.success) { res.status(400).json({ error: parsed.error.message }); return; }
-  if (parsed.data.recordedAt && manilaDate(new Date(parsed.data.recordedAt)) < manilaDate()) {
-    res.status(400).json({ error: "Health logs cannot be recorded with a past date." });
-    return;
-  }
+  const dateProblem = recordedAtProblem(req, parsed.data.recordedAt);
+  if (dateProblem) { res.status(400).json({ error: dateProblem }); return; }
   const [created] = await db.insert(healthLogsTable).values({
     patientId,
     symptoms: parsed.data.symptoms,

@@ -1,0 +1,44 @@
+# CareTrack on Render (free plan): one always-on web service that runs the Express API, the
+# background jobs and serves the built website. The Android app connects to its public
+# https://<name>.onrender.com address. Data stays in the existing Supabase database.
+# Set up: Render dashboard > New > Blueprint > pick this GitHub repo. See docs/DEPLOY.md.
+services:
+  - type: web
+    name: caretrack-app # becomes https://caretrack-app.onrender.com if the name is free
+    runtime: node
+    plan: free
+    region: singapore # same region as the Supabase database (ap-southeast-1)
+    # --prod=false: the build tools are devDependencies, and NODE_ENV=production would skip them.
+    buildCommand: >-
+      npx --yes pnpm@11.17.0 install --frozen-lockfile --prod=false &&
+      npx --yes pnpm@11.17.0 --filter @workspace/caretrack run build &&
+      npx --yes pnpm@11.17.0 --filter @workspace/api-server run build
+    startCommand: cd artifacts/api-server && node --enable-source-maps ./dist/index.mjs
+    healthCheckPath: /api/healthz
+    autoDeploy: true
+    envVars:
+      - key: NODE_VERSION
+        value: 22.20.0
+      - key: NODE_ENV
+        value: production
+      # --- secrets: Render asks for these when the blueprint is created (never commit them) ---
+      - key: DATABASE_URL # Supabase "Session pooler" connection string (same as your .env)
+        sync: false
+      - key: SESSION_SECRET # MUST be the same value as in your .env: it also unlocks encrypted messages and lab files
+        sync: false
+      # --- login codes ---
+      - key: OTP_ENABLED
+        value: "true"
+      # Shows the code on the sign-in screen when it can't be sent (needed for the demo accounts).
+      # Set to "false" once real accounts get their codes by email/SMS.
+      - key: OTP_OFFLINE_FALLBACK
+        value: "true"
+      - key: GMAIL_USER
+        sync: false
+      - key: GMAIL_APP_PASSWORD
+        sync: false
+      # --- optional AI ---
+      - key: GROQ_API_KEY
+        sync: false
+      - key: ANTHROPIC_API_KEY
+        sync: false

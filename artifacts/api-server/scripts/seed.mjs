@@ -15,14 +15,14 @@ const pool = new Pool({
 const client = await pool.connect();
 
 // Every demo account uses the same password so the login page quick-pick buttons work.
-const DEMO_PASSWORD = "caretrack-demo";
+const DEMO_PASSWORD = "demo1234";
 
 const demoUsers = [
-  { key: "admin", name: "Carla Mendoza", email: "admin@caretrack.demo", role: "admin", phone: "09170000001" },
-  { key: "provider1", name: "Dr. Mira Santos", email: "provider@caretrack.demo", role: "provider", phone: "09170000002" },
-  { key: "provider2", name: "Dr. Joel Reyes", email: "doctor2@caretrack.demo", role: "provider", phone: "09170000003" },
-  { key: "patient", name: "Alex Morgan", email: "patient@caretrack.demo", role: "patient", phone: "09170000004" },
-  { key: "caregiver", name: "Jordan Morgan", email: "caregiver@caretrack.demo", role: "caregiver", phone: "09170000005" },
+  { key: "admin", name: "Carla Mendoza", email: "admin@caretrack.com", role: "admin", phone: "09170000001" },
+  { key: "provider1", name: "Dr. Mira Santos", email: "doctor@caretrack.com", role: "provider", phone: "09170000002" },
+  { key: "provider2", name: "Dr. Joel Reyes", email: "doctor2@caretrack.com", role: "provider", phone: "09170000003" },
+  { key: "patient", name: "Alex Morgan", email: "patient@caretrack.com", role: "patient", phone: "09170000004" },
+  { key: "caregiver", name: "Jordan Morgan", email: "caregiver@caretrack.com", role: "caregiver", phone: "09170000005" },
 ];
 
 const patientSeed = [

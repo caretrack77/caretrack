@@ -1,13 +1,27 @@
-import { and, eq, ne } from "drizzle-orm";
+import { and, eq, inArray, ne } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import bcrypt from "bcryptjs";
 import { CreateUserResponse, ListUsersResponse, UpdateUserBody, UpdateUserResponse, CreateUserBody, UpdateUserParams } from "@workspace/api-zod";
-import { db, usersTable } from "@workspace/db";
+import { db, privacyConsentsTable, usersTable } from "@workspace/db";
+import { PRIVACY_NOTICE_VERSION } from "../lib/security-config";
 import { authenticate, currentUser, passwordProblem, requireRoles, requireUser } from "../lib/auth";
 import { writeAuditLog } from "../lib/audit";
 
 const router: IRouter = Router();
 router.use("/users", authenticate, requireUser, requireRoles("admin"));
+
+/**
+ * The API contract includes whether each user accepted the current privacy notice. It was never
+ * filled in, so every Team access request failed response validation (HTTP 500).
+ */
+async function withConsent<T extends { id: number; createdAt: Date }>(users: T[]) {
+  const ids = users.map((user) => user.id);
+  const accepted = ids.length
+    ? new Set((await db.select({ userId: privacyConsentsTable.userId }).from(privacyConsentsTable)
+      .where(and(inArray(privacyConsentsTable.userId, ids), eq(privacyConsentsTable.version, PRIVACY_NOTICE_VERSION)))).map((row) => row.userId))
+    : new Set<number>();
+  return users.map((user) => ({ ...user, createdAt: user.createdAt.toISOString(), privacyConsentAccepted: accepted.has(user.id) }));
+}
 
 router.get("/users", async (_req, res): Promise<void> => {
   const users = await db
@@ -24,9 +38,7 @@ router.get("/users", async (_req, res): Promise<void> => {
     .from(usersTable)
     .orderBy(usersTable.createdAt);
   res.json(
-    ListUsersResponse.parse(
-      users.map((user) => ({ ...user, createdAt: user.createdAt.toISOString() })),
-    ),
+    ListUsersResponse.parse(await withConsent(users)),
   );
 });
 
@@ -76,7 +88,7 @@ router.post("/users", async (req, res): Promise<void> => {
     role: user.role,
   });
   res.status(201).json(
-    CreateUserResponse.parse({ ...user, createdAt: user.createdAt.toISOString() }),
+    CreateUserResponse.parse((await withConsent([user]))[0]),
   );
 });
 
@@ -151,7 +163,7 @@ router.patch("/users/:id", async (req, res): Promise<void> => {
     changedFields: Object.keys(changes).filter((field) => field !== "passwordHash"),
   });
   res.json(
-    UpdateUserResponse.parse({ ...user, createdAt: user.createdAt.toISOString() }),
+    UpdateUserResponse.parse((await withConsent([user]))[0]),
   );
 });
 

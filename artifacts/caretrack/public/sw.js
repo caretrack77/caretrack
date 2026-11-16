@@ -1,28 +1,47 @@
-// CareTrack offline support.
-// Network first: always try the server, and keep a copy of every successful page and
-// data response. When the internet (or the server) is down, the saved copy is shown,
-// so patients can still see today's doses. Dose confirmations made offline are queued
-// by the app and synced when the connection returns.
+// CareTrack offline support: the app's screens.
+// Network first: always try the server, and keep a copy of every page, script, style and
+// image it loads, so the website opens without internet. API data is NOT cached here:
+// the app saves it per signed-in user in IndexedDB and queues changes made offline
+// (see src/offline.ts), which works the same in the browser and the Android app.
 // Wellness tips (motivation, hydration, health tips, quotes) are stored on the device and
 // shown as local notifications, so they also work with no internet. See wellness.js.
 importScripts("/wellness.js");
 const Wellness = self.CareTrackWellness;
 
-const CACHE = "caretrack-offline-v1";
+// v2: API responses are no longer kept here; activation deletes the v1 cache that had them.
+const CACHE = "caretrack-shell-v2";
 const SHELL = "/__app-shell";
-// Never cache sign-in requests, private files or the live event stream.
-const SKIP = [/^\/api\/auth\/(login|logout|otp|change-password)/, /^\/api\/lab-results\//, /^\/api\/reports\/\d+\/(pdf|csv)/, /^\/api\/events/];
-// In the Android app the API is on another origin (passed as ?api=); its data is cached too.
-const API_ORIGIN = (() => { try { return new URL(self.location.href).searchParams.get("api") || null; } catch { return null; } })();
-const cacheable = (url) =>
-  url.origin === self.location.origin || (API_ORIGIN !== null && url.origin === API_ORIGIN && url.pathname.startsWith("/api/"));
+const cacheable = (url) => url.origin === self.location.origin && !url.pathname.startsWith("/api/");
 
-self.addEventListener("install", () => self.skipWaiting());
-self.addEventListener("activate", (event) => event.waitUntil(Promise.all([self.clients.claim(), wakeUp()])));
+self.addEventListener("install", (event) => {
+  event.waitUntil(precacheShell().catch(() => {}).then(() => self.skipWaiting()));
+});
+/**
+ * Saves the start page and the scripts/styles it references during installation. On the very
+ * first visit these load before the worker is in control, so without this an offline refresh
+ * would find the page but not its code.
+ */
+async function precacheShell() {
+  const cache = await caches.open(CACHE);
+  const response = await fetch(new Request("/", { cache: "reload" }));
+  if (!response.ok) return;
+  const html = await response.clone().text();
+  await cache.put("/", response.clone());
+  await cache.put(SHELL, response);
+  const assets = [...html.matchAll(/(?:src|href)="(\/[^"]+\.(?:js|css|svg|png|webmanifest))"/g)].map((m) => m[1]);
+  await Promise.all([...new Set(assets)].map((path) => cache.add(path).catch(() => {})));
+}
+self.addEventListener("activate", (event) => event.waitUntil(Promise.all([
+  self.clients.claim(),
+  // Best effort: a failed clean-up must not stop the reminders below from being restored.
+  Promise.resolve().then(() => caches.keys()).then((names) => Promise.all(names.filter((name) => name !== CACHE).map((name) => caches.delete(name)))).catch(() => {}),
+  wakeUp(),
+])));
 
 self.addEventListener("message", (event) => {
-  // Sent on sign-out so another user of the same device can't see cached data or get their reminders.
-  if (event.data === "clear-cache") event.waitUntil(Promise.all([caches.delete(CACHE), clearLocalReminders()]));
+  // Sent on sign-out so another user of the same device doesn't get their reminders. (The cache
+  // here only holds the app's screens; saved patient data is removed by the app itself.)
+  if (event.data === "clear-cache") event.waitUntil(clearLocalReminders());
   if (event.data?.type === "cache-dose-schedule") event.waitUntil(cacheDoseSchedule(event.data.doses));
   if (event.data?.type === "wellness-config") event.waitUntil(idbPut("wellness-config", event.data.config).then(wellnessTick));
   if (event.data?.type === "wellness-tick") event.waitUntil(wakeUp());
@@ -162,7 +181,7 @@ self.addEventListener("fetch", (event) => {
   const request = event.request;
   if (request.method !== "GET") return;
   const url = new URL(request.url);
-  if (!cacheable(url) || SKIP.some((re) => re.test(url.pathname))) return;
+  if (!cacheable(url)) return;
 
   event.respondWith(
     fetch(request)
@@ -179,9 +198,9 @@ self.addEventListener("fetch", (event) => {
       .catch(async () => {
         const cached = (await caches.match(request)) || (request.mode === "navigate" ? await caches.match(SHELL) : undefined);
         if (cached) return cached;
-        return new Response(JSON.stringify({ error: "You're offline and this information hasn't been saved on this device yet." }), {
+        return new Response("You're offline and this page hasn't been saved on this device yet.", {
           status: 503,
-          headers: { "content-type": "application/json" },
+          headers: { "content-type": "text/plain; charset=utf-8" },
         });
       }),
   );

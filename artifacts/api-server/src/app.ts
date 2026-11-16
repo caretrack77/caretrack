@@ -13,6 +13,7 @@ import helmet from "helmet";
 import router from "./routes";
 import { logger } from "./lib/logger";
 import { SESSION_HEADER } from "./lib/auth";
+import { idempotency } from "./lib/idempotency";
 
 const app: Express = express();
 
@@ -26,10 +27,12 @@ app.use(helmet({
       baseUri: ["'self'"],
       objectSrc: ["'none'"],
       scriptSrc: ["'self'"],
-      styleSrc: ["'self'", "'unsafe-inline'"],
+      // index.html loads its fonts from Google Fonts; without these the production site
+      // silently fell back to system fonts (the dev server sends no CSP, so it looked fine there).
+      styleSrc: ["'self'", "'unsafe-inline'", "https://fonts.googleapis.com"],
       imgSrc: ["'self'", "data:", "blob:"],
       connectSrc: ["'self'", "https:", "wss:"],
-      fontSrc: ["'self'", "data:"],
+      fontSrc: ["'self'", "data:", "https://fonts.gstatic.com"],
       workerSrc: ["'self'", "blob:"],
       manifestSrc: ["'self'"],
     },
@@ -81,6 +84,8 @@ app.use((req, res, next) =>
 );
 app.use(express.urlencoded({ extended: true }));
 
+// Changes synced from offline devices carry an Idempotency-Key, so retries never duplicate them.
+app.use("/api", idempotency);
 app.use("/api", router);
 
 app.use("/api", (_req, res) => {

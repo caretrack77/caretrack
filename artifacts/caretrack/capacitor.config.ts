@@ -10,8 +10,9 @@ const config: CapacitorConfig = {
   android: {
     // Only HTTPS servers: never load plain-HTTP content into the app.
     allowMixedContent: false,
-    // Web debugging (chrome://inspect) only in debug builds.
-    webContentsDebuggingEnabled: false,
+    // Web debugging (chrome://inspect) is off. For automated testing of a local test build only,
+    // sync with CARETRACK_WEBVIEW_DEBUG=true; never ship a build made that way.
+    webContentsDebuggingEnabled: process.env.CARETRACK_WEBVIEW_DEBUG === 'true',
   },
   plugins: {
     SplashScreen: {

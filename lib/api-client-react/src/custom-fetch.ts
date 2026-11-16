@@ -350,9 +350,101 @@ async function parseSuccessBody(
   }
 }
 
+// ---------------------------------------------------------------------------
+// Offline support
+// ---------------------------------------------------------------------------
+
+/** A request as the offline adapter sees it. `path` is the API path, e.g. `/api/doses?date=…`. */
+export type OfflineRequest = { method: string; path: string; body: string | null };
+
+/**
+ * Lets the app keep working without a connection (see artifacts/caretrack/src/offline.ts):
+ * - `handleMutation` may take over a change (save it on the device and sync it later) and
+ *   return the result to show; returning `undefined` sends the request normally.
+ * - `afterGet` sees every successful GET (to save a copy) and may adjust what is returned.
+ * - `onUnreachable` is asked for a saved copy when a GET can't reach the server.
+ * - `onReachable` reports whether the server answered at all.
+ */
+export type OfflineAdapter = {
+  handleMutation?(request: OfflineRequest): Promise<{ data: unknown } | undefined>;
+  afterGet?(request: OfflineRequest, data: unknown): Promise<unknown>;
+  onUnreachable?(request: OfflineRequest): Promise<{ data: unknown } | undefined>;
+  onReachable?(reachable: boolean): void;
+};
+
+let _offlineAdapter: OfflineAdapter | null = null;
+
+export function setOfflineAdapter(adapter: OfflineAdapter | null): void {
+  _offlineAdapter = adapter;
+}
+
+/**
+ * Thrown when the server could not be reached (no internet, server down, gateway error).
+ * `data.error` carries a readable message, like the server's own error responses.
+ */
+export class OfflineError extends Error {
+  readonly name = "OfflineError";
+  readonly status = 0;
+  readonly data: { error: string };
+  constructor(message: string) {
+    super(message);
+    Object.setPrototypeOf(this, new.target.prototype);
+    this.data = { error: message };
+  }
+}
+
+/** Gateway answers that mean "the CareTrack server itself was not reached". */
+const UNREACHABLE_STATUS = new Set([502, 503, 504, 521, 522, 523, 524, 530]);
+/** A request on a connection that silently drops packets gives up after this long. */
+const REQUEST_TIMEOUT_MS = 20_000;
+
+export function isUnreachableStatus(status: number): boolean {
+  return UNREACHABLE_STATUS.has(status);
+}
+
+function withTimeout(signal: AbortSignal | null | undefined): AbortSignal | undefined {
+  if (typeof AbortSignal === "undefined" || typeof AbortSignal.timeout !== "function") return signal ?? undefined;
+  const timeout = AbortSignal.timeout(REQUEST_TIMEOUT_MS);
+  if (!signal) return timeout;
+  return typeof AbortSignal.any === "function" ? AbortSignal.any([signal, timeout]) : signal;
+}
+
+function bodyText(body: BodyInit | null | undefined): string | null {
+  return typeof body === "string" ? body : null;
+}
+
 export async function customFetch<T = unknown>(
   input: RequestInfo | URL,
   options: CustomFetchOptions = {},
+): Promise<T> {
+  const offlineRequest: OfflineRequest = {
+    method: resolveMethod(input, options.method),
+    path: resolveUrl(input),
+    body: bodyText(options.body),
+  };
+  const adapter = offlineRequest.path.startsWith("/api/") ? _offlineAdapter : null;
+  if (adapter?.handleMutation && offlineRequest.method !== "GET" && offlineRequest.method !== "HEAD") {
+    const handled = await adapter.handleMutation(offlineRequest);
+    if (handled) return handled.data as T;
+  }
+  try {
+    const data = await sendRequest<T>(input, options);
+    if (adapter?.afterGet && offlineRequest.method === "GET") return (await adapter.afterGet(offlineRequest, data)) as T;
+    return data;
+  } catch (error) {
+    const unreachable = error instanceof OfflineError;
+    if (unreachable && adapter?.onUnreachable && offlineRequest.method === "GET") {
+      const saved = await adapter.onUnreachable(offlineRequest);
+      if (saved) return saved.data as T;
+      throw new OfflineError("You’re offline and this information hasn’t been saved on this device yet.");
+    }
+    throw error;
+  }
+}
+
+async function sendRequest<T>(
+  input: RequestInfo | URL,
+  options: CustomFetchOptions,
 ): Promise<T> {
   input = applyBaseUrl(input);
   const { responseType = "auto", headers: headersInit, ...init } = options;
@@ -391,9 +483,23 @@ export async function customFetch<T = unknown>(
 
   const requestInfo = { method, url: resolveUrl(input) };
 
-  const response = await fetch(input, { ...init, method, headers });
+  let response: Response;
+  try {
+    response = await fetch(input, { ...init, method, headers, signal: withTimeout(init.signal) });
+  } catch (error) {
+    // The caller cancelled (e.g. React Query dropped the query): not a connection problem.
+    if (init.signal?.aborted) throw error;
+    _offlineAdapter?.onReachable?.(false);
+    throw new OfflineError("You’re offline. This needs an internet connection. Please try again when you’re connected.");
+  }
   const issuedToken = response.headers.get(SESSION_HEADER);
   if (issuedToken && _sessionTokenListener) _sessionTokenListener(issuedToken);
+
+  if (isUnreachableStatus(response.status)) {
+    _offlineAdapter?.onReachable?.(false);
+    throw new OfflineError("The CareTrack server can’t be reached right now. Please try again shortly.");
+  }
+  _offlineAdapter?.onReachable?.(true);
 
   if (!response.ok) {
     const errorData = await parseErrorBody(response, method);

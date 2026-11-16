@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState, type FormEvent, type ReactNode } from 'react';
+import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { Link, Redirect, Route, Switch, useLocation, useParams } from 'wouter';
 import {
@@ -15,16 +15,22 @@ import {
   useGenerateReport, useGetAnalytics, useGetCurrentUser, useGetPatient, useListAuditLogs,
   useListDoses, useListMedications, useListNotifications, useListPatientInsights, useListPatients,
   useListReportSchedules, useListReports, useListUsers, useLogin, useLogout, useMarkNotificationRead, useSimulateOverdueDoses,
-  useUpdateDoseStatus, useUpdateMedication, useSendLoginOtp, useVerifyLoginOtp, useChangePassword, getGetCurrentUserQueryKey, useGetRiskModel, getGetRiskModelQueryKey, useTrainRiskModel, useListRiskPredictions, getListRiskPredictionsQueryKey, useGetPatientRisk, getGetPatientRiskQueryKey, useListLabResults, getListLabResultsQueryKey, useUploadLabResult, useReviewLabResult, useListAppointments, getListAppointmentsQueryKey, useCreateAppointment, useUpdateAppointment, useAskAssistant, updateDoseStatus, useCreatePatientAccount, useGetDeliveryStatus, useSendDeliveryTest, useListCoverage, getListCoverageQueryKey, useCreateCoverage, useEndCoverage, useListProviders, useGetMedicationProgress, getGetMedicationProgressQueryKey, useListMessageThreads, getListMessageThreadsQueryKey, useListPatientMessages, getListPatientMessagesQueryKey, useSendPatientMessage, useMarkPatientMessagesRead,   useUpdatePatient, useUpdateReportSchedule, useUpdateUser, useListHealthMetrics, useCreateHealthMetric, useListHealthLogs, useCreateHealthLog, getListHealthMetricsQueryKey, getListHealthLogsQueryKey,
+  useUpdateDoseStatus, useUpdateMedication, useSendLoginOtp, useVerifyLoginOtp, useChangePassword, getGetCurrentUserQueryKey, useGetRiskModel, getGetRiskModelQueryKey, useTrainRiskModel, useListRiskPredictions, getListRiskPredictionsQueryKey, useGetPatientRisk, getGetPatientRiskQueryKey, useListLabResults, getListLabResultsQueryKey, useUploadLabResult, useReviewLabResult, useListAppointments, getListAppointmentsQueryKey, useCreateAppointment, useUpdateAppointment, useAskAssistant, useCreatePatientAccount, useGetDeliveryStatus, useSendDeliveryTest, useListCoverage, getListCoverageQueryKey, useCreateCoverage, useEndCoverage, useListProviders, useGetMedicationProgress, getGetMedicationProgressQueryKey, useListMessageThreads, getListMessageThreadsQueryKey, useListPatientMessages, getListPatientMessagesQueryKey, useSendPatientMessage, useMarkPatientMessagesRead,   useUpdatePatient, useUpdateReportSchedule, useUpdateUser, useListHealthMetrics, useCreateHealthMetric, useListHealthLogs, useCreateHealthLog, getListHealthMetricsQueryKey, getListHealthLogsQueryKey,
 } from '@workspace/api-client-react';
 import type { Analytics, Appointment, AuditLog, AuthUser, Coverage, LoginChallenge, OtpSendResult, Dose, Medication, Notification, Patient, Report, ReportSchedule, User, HealthMetric, HealthMetricInputMetricType, HealthLog } from '@workspace/api-client-react';
-import { customFetch } from '@workspace/api-client-react';
+import { customFetch, OfflineError } from '@workspace/api-client-react';
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { builtInServerUrl, clearNativeSession, getServerUrl, isNativeApp, normalizeServerUrl, openProtectedFile, saveServerUrl, streamServerEvents, testServer } from './native';
 import { clearNativeNotifications, exactAlarmsAllowed, notificationPermission, openExactAlarmSettings, previewNativeWellness, requestNotificationPermission, syncNativeDoseReminders, syncNativeWellness } from './native-notifications';
+import { clearSavedData, discardChange, getSyncSnapshot, keepMine, onSyncComplete, retryAll, subscribeSync, syncErrorOf, syncStateOf, unsyncedCount, type SyncState } from './offline';
 import './index.css';
 
-const client = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 15_000 } } });
+// networkMode 'always': without it React Query pauses every query and save while the browser
+// reports no network, so saved data would never show and offline saves would hang on "Saving…".
+// Offline answers come from offline.ts (saved copies and the outbox).
+const client = new QueryClient({ defaultOptions: { queries: { retry: 1, staleTime: 15_000, networkMode: 'always' }, mutations: { networkMode: 'always' } } });
+// After waiting changes reach the server, reload every screen from the server.
+onSyncComplete(() => { void client.invalidateQueries(); });
 // Local calendar date (YYYY-MM-DD), not UTC, so "today" matches the user's clock.
 const dateToday = () => new Date().toLocaleDateString('en-CA');
 const dateTimeNow = () => {
@@ -46,7 +52,7 @@ const initials = (name = '') => name.split(' ').map((n) => n[0]).slice(0, 2).joi
 /** Removes cached pages and queued doses so the next person on this device sees nothing. */
 const clearOfflineData = () => {
   navigator.serviceWorker?.controller?.postMessage('clear-cache');
-  try { localStorage.removeItem('caretrack-offline-doses'); } catch { /* storage unavailable */ }
+  void clearSavedData();
   // Android app: forget the session token and cancel this user's scheduled reminders and tips.
   void clearNativeSession();
   void clearNativeNotifications();
@@ -67,6 +73,7 @@ const navItems = [
   { href: '/messages', label: 'Messages', icon: MessageSquare, roles: ['admin', 'provider', 'patient', 'caregiver'] },
   { href: '/ai', label: 'AI risk prediction', icon: Sparkles, roles: ['admin', 'provider'] },
   { href: '/prescriptions', label: 'My prescriptions', icon: FileText, roles: ['patient', 'caregiver'] },
+  { href: '/health', label: 'My health', icon: HeartPulse, roles: ['patient', 'caregiver'] },
   { href: '/appointments', label: 'Check-ups', icon: CalendarDays, roles: ['admin', 'provider', 'patient', 'caregiver'] },
   { href: '/analytics', label: 'Analytics', icon: BarChart3, roles: ['admin', 'provider'] },
   { href: '/reports', label: 'Reports', icon: FileText, roles: ['admin', 'provider', 'caregiver'] },
@@ -191,18 +198,32 @@ function AuthenticatedApp() {
   const me = useGetCurrentUser({ query: { enabled: !noServer, queryKey: getGetCurrentUserQueryKey() } });
   // Only a real user object counts as signed in (never an HTML page or other unexpected reply).
   const user = me.data && typeof me.data === 'object' && 'id' in me.data ? me.data as AuthUser : undefined;
-  const threads = useListMessageThreads({ query: { enabled: !!user && !user.mustChangePassword, queryKey: getListMessageThreadsQueryKey(), refetchInterval: 10_000 } });
+  // Protected APIs answer 403 until the password is changed and the privacy notice accepted.
+  const ready = Boolean(user && !user.mustChangePassword && user.privacyConsentAccepted);
+  const threads = useListMessageThreads({ query: { enabled: ready, queryKey: getListMessageThreadsQueryKey(), refetchInterval: 10_000 } });
   const unreadMessages = (threads.data || []).reduce((n, t) => n + t.unreadCount, 0);
-  useRealtimeEvents(Boolean(user && !user.mustChangePassword));
+  useRealtimeEvents(ready);
+  useWarmOfflineData(ready ? user : undefined);
   const logout = useLogout();
+  // Changes still waiting to upload stay on this device for this user and upload at their next sign-in.
+  const signOut = () => {
+    const waiting = unsyncedCount();
+    if (waiting && !window.confirm(`${waiting} change${waiting === 1 ? ' is' : 's are'} saved on this device but not uploaded yet. They stay on this device and upload the next time you sign in. Sign out now?`)) return;
+    const done = () => { client.clear(); clearOfflineData(); setLocation('/login'); };
+    logout.mutate(undefined, { onSuccess: done, onError: (err) => {
+      if (!(err instanceof OfflineError) || isNativeApp) { done(); return; }
+      // The browser's sign-in cookie can only be ended by the server.
+      window.alert('You’re offline. Signing out of the website needs an internet connection. Please try again when you’re connected.');
+    } });
+  };
   const [mobileNav,setMobileNav]=useState(false);
   // Android back button closes the menu first (see native.ts).
   useEffect(()=>{const close=()=>setMobileNav(false);window.addEventListener('caretrack-close-nav',close);return()=>window.removeEventListener('caretrack-close-nav',close)},[]);
   if (noServer) return <LoginRedirect/>;
   if (me.isLoading) return <LoadingScreen/>;
   if (me.isError || !user) return <LoginRedirect/>;
-  if (user.mustChangePassword) return <FirstLoginPasswordScreen user={user} onSignOut={()=>logout.mutate(undefined,{onSuccess:()=>{client.clear();clearOfflineData();setLocation('/login')}})}/>;
-  if (!user.privacyConsentAccepted) return <PrivacyConsentScreen user={user} onSignOut={()=>logout.mutate(undefined,{onSuccess:()=>{client.clear();clearOfflineData();setLocation('/login')}})}/>;
+  if (user.mustChangePassword) return <FirstLoginPasswordScreen user={user} onSignOut={()=>signOut()}/>;
+  if (!user.privacyConsentAccepted) return <PrivacyConsentScreen user={user} onSignOut={()=>signOut()}/>;
   const pathTitle = currentPath;
   const home = homeFor(user.role);
   if (pathTitle === '/' || (pathTitle === '/dashboard' && home !== '/dashboard')) return <Redirect to={home}/>;
@@ -215,16 +236,16 @@ function AuthenticatedApp() {
         {navItems.filter(n=>n.roles.includes(user.role)).map(({href,label:navLabel,icon:Icon})=>{const label=href==='/messages'&&user.role==='patient'?'Message my doctor':navLabel;return <Link key={href} href={href} data-testid={`link-nav-${href.slice(1).replace('/','-')}`} className={`flex items-center gap-3 rounded-xl px-3 py-3 text-[13px] font-medium transition ${pathTitle===href?'bg-[#236275] text-white shadow-inner':'text-white/65 hover:bg-white/[.06] hover:text-white'}`}><Icon size={18} strokeWidth={1.8}/>{label}{href==='/today'&&<span className="ml-auto h-1.5 w-1.5 rounded-full bg-[#74d9c5]"/>}{href==='/messages'&&unreadMessages>0&&<span data-testid="status-unread-messages" className="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-[#74d9c5] px-1.5 text-[10px] font-bold text-[#123f4d]">{unreadMessages}</span>}</Link>})}
       </nav>
       <div className="mt-3 shrink-0 rounded-2xl border border-white/10 bg-[#103747] p-4"><div className="flex items-center gap-2 text-xs font-semibold text-[#86ded0]"><ShieldCheck size={15}/> Private demo space</div><p className="mt-2 text-[11px] leading-5 text-white/50">Only your assigned care team can see this information.</p></div>
-      <button data-testid="button-logout" onClick={()=>logout.mutate(undefined,{onSuccess:()=>{client.clear();clearOfflineData();setLocation('/login')}})} className="mt-4 flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-white/65 hover:bg-white/[.06] hover:text-white"><LogOut size={17}/> Sign out</button>
+      <button data-testid="button-logout" onClick={()=>signOut()} className="mt-4 flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-white/65 hover:bg-white/[.06] hover:text-white"><LogOut size={17}/> Sign out</button>
     </aside>
-    {mobileNav&&<div data-mobile-nav-open className="fixed inset-0 z-50 bg-[#102e39]/45 lg:hidden" onClick={()=>setMobileNav(false)}><div className="sidebar-scroll flex h-full w-[280px] flex-col overflow-y-auto bg-[#174353] p-5 text-white" onClick={e=>e.stopPropagation()}><div className="flex items-center justify-between"><Brand light/><button data-testid="button-close-navigation" onClick={()=>setMobileNav(false)} className="rounded-lg p-2"><X size={18}/></button></div><nav className="mt-8 space-y-1">{navItems.filter(n=>n.roles.includes(user.role)).map(({href,label,icon:Icon})=><Link key={href} href={href} onClick={()=>setMobileNav(false)} data-testid={`mobile-link-${href.slice(1).replace('/','-')}`} className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-white/75 hover:bg-white/10"><Icon size={18}/>{label}{href==='/messages'&&unreadMessages>0&&<span className="ml-auto rounded-full bg-[#74d9c5] px-1.5 text-[10px] font-bold text-[#123f4d]">{unreadMessages}</span>}</Link>)}</nav><button data-testid="button-logout-mobile" onClick={()=>logout.mutate(undefined,{onSuccess:()=>{client.clear();clearOfflineData();setLocation('/login')}})} className="mt-8 flex items-center gap-3 px-3 py-3 text-sm text-white/70"><LogOut size={17}/>Sign out</button></div></div>}
+    {mobileNav&&<div data-mobile-nav-open className="fixed inset-0 z-50 bg-[#102e39]/45 lg:hidden" onClick={()=>setMobileNav(false)}><div className="sidebar-scroll flex h-full w-[280px] flex-col overflow-y-auto bg-[#174353] p-5 text-white" onClick={e=>e.stopPropagation()}><div className="flex items-center justify-between"><Brand light/><button data-testid="button-close-navigation" aria-label="Close menu" onClick={()=>setMobileNav(false)} className="rounded-lg p-2"><X size={18}/></button></div><nav className="mt-8 space-y-1">{navItems.filter(n=>n.roles.includes(user.role)).map(({href,label,icon:Icon})=><Link key={href} href={href} onClick={()=>setMobileNav(false)} data-testid={`mobile-link-${href.slice(1).replace('/','-')}`} className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-white/75 hover:bg-white/10"><Icon size={18}/>{label}{href==='/messages'&&unreadMessages>0&&<span className="ml-auto rounded-full bg-[#74d9c5] px-1.5 text-[10px] font-bold text-[#123f4d]">{unreadMessages}</span>}</Link>)}</nav><button data-testid="button-logout-mobile" onClick={()=>signOut()} className="mt-8 flex items-center gap-3 px-3 py-3 text-sm text-white/70"><LogOut size={17}/>Sign out</button></div></div>}
     <div className="lg:pl-[252px]">
       <header className="sticky top-0 z-30 flex h-[68px] items-center justify-between border-b border-[#dfebeb] bg-[#f7fbfb]/95 px-4 backdrop-blur sm:px-8">
-        <button data-testid="button-open-navigation" onClick={()=>setMobileNav(true)} className="rounded-lg p-2 text-[#42616c] lg:hidden"><Menu size={21}/></button>
+        <button data-testid="button-open-navigation" aria-label="Open menu" onClick={()=>setMobileNav(true)} className="rounded-lg p-2 text-[#42616c] lg:hidden"><Menu size={21}/></button>
         <div className="hidden text-sm text-[#67818a] sm:block">Care, made clearer <span className="mx-2 text-[#a5b7bb]">/</span><span className="font-semibold text-[#254a57]">{navItems.find(x=>x.href===pathTitle)?.label||'Patient details'}</span></div>
-        <div className="ml-auto flex items-center gap-3"><div className="hidden items-center gap-2 rounded-full border border-[#d9e8e8] bg-white px-3 py-1.5 text-xs text-[#67818a] sm:flex"><span className="h-2 w-2 rounded-full bg-[#4cb7a3]"/>{new Date().toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'})}</div><NotificationBell user={user} readOnly={user.role==='caregiver'}/><button data-testid="button-help" title="CareTrack demo help" className="grid h-9 w-9 place-items-center rounded-full border border-[#dce8e9] bg-white text-[#587680] hover:bg-[#f0f7f7]"><CircleHelp size={17}/></button><Avatar name={user.name} small/></div>
+        <div className="ml-auto flex items-center gap-3"><div className="hidden items-center gap-2 rounded-full border border-[#d9e8e8] bg-white px-3 py-1.5 text-xs text-[#67818a] sm:flex"><span className="h-2 w-2 rounded-full bg-[#4cb7a3]"/>{new Date().toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'})}</div><SyncChip/><NotificationBell user={user} readOnly={user.role==='caregiver'}/><button data-testid="button-help" title="CareTrack demo help" className="grid h-9 w-9 place-items-center rounded-full border border-[#dce8e9] bg-white text-[#587680] hover:bg-[#f0f7f7]"><CircleHelp size={17}/></button><Avatar name={user.name} small/></div>
       </header>
-      <OfflineSync/>
+      <SyncBanner/>
       <WellnessNotifications user={user}/>
       <main className="mx-auto max-w-[1450px] px-4 py-6 sm:px-8 sm:py-8">
         <Switch>
@@ -237,6 +258,7 @@ function AuthenticatedApp() {
           <Route path="/account"><AccountPage user={user}/></Route>
           <Route path="/ai"><RoleGate user={user} allowed={['admin','provider']}><AiInsightsPage/></RoleGate></Route>
           <Route path="/prescriptions"><RoleGate user={user} allowed={['patient','caregiver']}><PrescriptionsPage user={user}/></RoleGate></Route>
+          <Route path="/health"><RoleGate user={user} allowed={['patient','caregiver']}><MyHealthPage user={user}/></RoleGate></Route>
           <Route path="/appointments"><AppointmentsPage user={user}/></Route>
           <Route path="/messages"><MessagesPage user={user}/></Route>
           <Route path="/analytics"><RoleGate user={user} allowed={['admin','provider']}><AnalyticsPage/></RoleGate></Route>
@@ -290,7 +312,8 @@ function useRealtimeEvents(enabled: boolean) {
   }, [enabled, qc]);
 }
 
-function LoginRedirect(){const [,setLocation]=useLocation();setLocation('/login');return <LoadingScreen/>}
+// Navigates after render (calling setLocation during render triggers a React warning).
+function LoginRedirect(){return <Redirect to="/login"/>}
 function RoleGate({user,allowed,children}:{user:AuthUser;allowed:string[];children:ReactNode}){return allowed.includes(user.role)?<>{children}</>:<AccessDenied/>}
 function LoadingScreen(){return <div className="grid min-h-[100dvh] place-items-center bg-[#f2f7f7]"><div className="w-full max-w-md space-y-4 p-8" data-testid="status-loading"><div className="h-12 w-40 animate-pulse rounded-xl bg-[#dce9e9]"/><div className="h-32 animate-pulse rounded-2xl bg-white"/><div className="h-24 animate-pulse rounded-2xl bg-white"/></div></div>}
 function Avatar({name,small=false}:{name:string;small?:boolean}){return <div data-testid="img-avatar" className={`grid shrink-0 place-items-center rounded-full bg-[#d9efeb] font-bold text-[#23716f] ${small?'h-9 w-9 text-xs':'h-10 w-10 text-sm'}`}>{initials(name)}</div>}
@@ -357,9 +380,8 @@ const DOSE_CORRECTION_WINDOW_MS=24*60*60*1000, DOSE_EARLY_WINDOW_MS=2*60*60*1000
 function DoseRow({dose,patientName,compact=false,readOnly=false,role}:{dose:Dose;patientName?:string;compact?:boolean;readOnly?:boolean;role?:string}){
   const update=useUpdateDoseStatus(), qc=useQueryClient();
   const [flash,setFlash]=useState('');
-  // Offline: save locally, update the screen, and sync later.
-  const saveOffline=(status:'taken'|'missed'|'skipped'|'scheduled')=>{const now=new Date().toISOString();queueDose({id:dose.id,status,takenAt:now});qc.setQueriesData<Dose[]>({queryKey:getListDosesQueryKey()},old=>old?.map(d=>d.id===dose.id?{...d,status,takenTime:status==='taken'?now:null,loggedBy:'Saved on this device (waiting to sync)'}:d));setFlash('Saved on this device. It will sync when you’re back online.');setTimeout(()=>setFlash(''),5000)};
-  const change=(status:'taken'|'missed'|'skipped'|'scheduled')=>{if(!navigator.onLine){saveOffline(status);return}update.mutate({id:dose.id,data:{status}},{onSuccess:(d)=>{qc.invalidateQueries({queryKey:getListDosesQueryKey()});qc.invalidateQueries({queryKey:getGetAnalyticsQueryKey()});qc.invalidateQueries({predicate:q=>String(q.queryKey[0]).includes('medication-progress')});setFlash(status==='taken'?`Marked as taken at ${timeLabel(d.takenTime||new Date().toISOString())}`:status==='scheduled'?'Undone. This dose is waiting for you again.':`Marked as ${status}.`);setTimeout(()=>setFlash(''),4000)},onError:(err)=>{if(isNetworkError(err)){update.reset();saveOffline(status)}}})};
+  // Without a connection the change is saved on this device and uploaded later (offline.ts).
+  const change=(status:'taken'|'missed'|'skipped'|'scheduled')=>update.mutate({id:dose.id,data:{status}},{onSuccess:(d)=>{qc.invalidateQueries({queryKey:getListDosesQueryKey()});qc.invalidateQueries({queryKey:getGetAnalyticsQueryKey()});qc.invalidateQueries({predicate:q=>String(q.queryKey[0]).includes('medication-progress')});const local=!!syncStateOf(d);setFlash(local?'Saved on this device. It will upload automatically when you’re back online.':status==='taken'?`Marked as taken at ${timeLabel(d.takenTime||new Date().toISOString())}`:status==='scheduled'?'Undone. This dose is waiting for you again.':`Marked as ${status}.`);setTimeout(()=>setFlash(''),local?6000:4000)}});
   const due=new Date(dose.scheduledTime).getTime()<=Date.now();
   const offset=Date.now()-new Date(dose.scheduledTime).getTime();
   const tooOld=role==='patient'&&offset>DOSE_CORRECTION_WINDOW_MS;
@@ -371,7 +393,7 @@ function DoseRow({dose,patientName,compact=false,readOnly=false,role}:{dose:Dose
   const small='rounded-xl border border-[#e2ebeb] px-3.5 py-2.5 text-xs font-semibold text-[#71868c] transition hover:bg-[#f6f9f9] disabled:opacity-50';
   return <div data-testid={`row-dose-${dose.id}`} className={`px-5 py-4 ${compact?'sm:px-6':''} ${dose.status==='scheduled'&&due&&!readOnly?'bg-[#fffaf0]':''}`}>
     <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:gap-4">
-      <div className="flex min-w-0 flex-1 items-center gap-3"><div className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl ${dose.status==='taken'?'bg-[#e7f5ef] text-[#35896c]':dose.status==='missed'?'bg-[#fff0eb] text-[#ad5b45]':'bg-[#eaf3f5] text-[#4a8494]'}`}>{dose.status==='taken'?<Check size={20}/>:<Pill size={19}/>}</div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-semibold text-[#31535e]" data-testid={`text-dose-medication-${dose.id}`}>{dose.medicationName}</span><StatusPill status={dose.status}/>{dose.status==='scheduled'&&due&&<span className="rounded-full bg-[#fbf1df] px-2 py-0.5 text-[10px] font-bold text-[#99702f]">DUE NOW</span>}</div><div className="mt-1 flex flex-wrap gap-x-3 text-xs text-[#81959a]"><span>{dose.dosage}</span>{patientName&&<span>{patientName}</span>}<span className="inline-flex items-center gap-1"><Clock3 size={12}/>Scheduled {timeLabel(dose.scheduledTime)}</span>{dose.loggedBy&&dose.status!=='scheduled'&&<span data-testid={`text-dose-logged-by-${dose.id}`} className="text-[#91a4a8]">by {dose.loggedBy}</span>}{dose.status==='taken'&&dose.takenTime&&<span className="font-semibold text-[#35896c]" data-testid={`text-dose-taken-at-${dose.id}`}>✓ Taken at {timeLabel(dose.takenTime)}</span>}{takenLate&&<span className="rounded-full bg-[#fbf1df] px-2 py-0.5 text-[10px] font-bold text-[#99702f]" title="Confirmed more than 2 hours after the scheduled time">TAKEN LATE</span>}</div></div></div>
+      <div className="flex min-w-0 flex-1 items-center gap-3"><div className={`grid h-11 w-11 shrink-0 place-items-center rounded-xl ${dose.status==='taken'?'bg-[#e7f5ef] text-[#35896c]':dose.status==='missed'?'bg-[#fff0eb] text-[#ad5b45]':'bg-[#eaf3f5] text-[#4a8494]'}`}>{dose.status==='taken'?<Check size={20}/>:<Pill size={19}/>}</div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="truncate text-sm font-semibold text-[#31535e]" data-testid={`text-dose-medication-${dose.id}`}>{dose.medicationName}</span><StatusPill status={dose.status}/><SyncBadge record={dose}/>{dose.status==='scheduled'&&due&&<span className="rounded-full bg-[#fbf1df] px-2 py-0.5 text-[10px] font-bold text-[#99702f]">DUE NOW</span>}</div><div className="mt-1 flex flex-wrap gap-x-3 text-xs text-[#81959a]"><span>{dose.dosage}</span>{patientName&&<span>{patientName}</span>}<span className="inline-flex items-center gap-1"><Clock3 size={12}/>Scheduled {timeLabel(dose.scheduledTime)}</span>{dose.loggedBy&&dose.status!=='scheduled'&&<span data-testid={`text-dose-logged-by-${dose.id}`} className="text-[#91a4a8]">by {dose.loggedBy}</span>}{dose.status==='taken'&&dose.takenTime&&<span className="font-semibold text-[#35896c]" data-testid={`text-dose-taken-at-${dose.id}`}>✓ Taken at {timeLabel(dose.takenTime)}</span>}{takenLate&&<span className="rounded-full bg-[#fbf1df] px-2 py-0.5 text-[10px] font-bold text-[#99702f]" title="Confirmed more than 2 hours after the scheduled time">TAKEN LATE</span>}</div></div></div>
       {!locked&&dose.status==='scheduled'&&<div className="flex flex-wrap items-center gap-2 sm:pl-0">
         <button data-testid={`button-dose-taken-${dose.id}`} disabled={busy} onClick={()=>change('taken')} className="inline-flex h-12 flex-1 items-center justify-center gap-2 rounded-xl bg-[#2f9a7f] px-5 text-sm font-bold text-white shadow-sm transition hover:bg-[#27846c] disabled:opacity-50 sm:flex-none"><Check size={18}/>{busy?'Saving…':'I’ve taken it'}</button>
         <button data-testid={`button-dose-skipped-${dose.id}`} disabled={busy} onClick={()=>change('skipped')} className={small}>Skip</button>
@@ -382,6 +404,7 @@ function DoseRow({dose,patientName,compact=false,readOnly=false,role}:{dose:Dose
     </div>
     {!readOnly&&tooOld&&dose.status!=='taken'&&<div data-testid={`status-dose-locked-${dose.id}`} className="mt-2 flex items-center gap-1.5 text-[11px] text-[#8ba0a4]"><ShieldCheck size={12}/>Locked — more than 24 hours old. Ask your care team to correct it.</div>}
     {!readOnly&&tooEarly&&<div className="mt-2 flex items-center gap-1.5 text-[11px] text-[#8ba0a4]"><Clock3 size={12}/>You can log this dose from {timeLabel(new Date(new Date(dose.scheduledTime).getTime()-DOSE_EARLY_WINDOW_MS).toISOString())}.</div>}
+    {(syncStateOf(dose)==='conflict'||syncStateOf(dose)==='rejected')&&<div data-testid={`status-dose-sync-${dose.id}`} className="mt-2 text-xs text-[#ad5b45]">{syncErrorOf(dose)}</div>}
     {flash&&<div role="status" data-testid={`status-dose-${dose.id}`} className="mt-2 text-xs font-semibold text-[#2f8a74]">{flash}</div>}
     {update.isError&&<div role="alert" className="mt-2 text-xs text-red-700">{apiError(update.error,'Could not save. Check your connection and try again.')}</div>}
   </div>;
@@ -562,7 +585,7 @@ function Conversation({user,patientId,patientName,onBack}:{user:AuthUser;patient
   return <>
     <div className="flex items-center gap-3 border-b border-[#eaf0f0] px-4 py-3 sm:px-5">{onBack&&<button data-testid="button-back-threads" onClick={onBack} aria-label="Back to conversations" className="rounded-lg p-1.5 text-[#587680] hover:bg-[#f1f7f7] lg:hidden"><ArrowLeft size={18}/></button>}<Avatar name={user.role==='patient'?(doctorName||'Care Team'):patientName} small/><div className="min-w-0"><div className="truncate text-sm font-bold text-[#254954]" data-testid="text-conversation-title">{user.role==='patient'?(doctorName||'My care team'):patientName}</div><div className="flex items-center gap-1.5 text-[11px] text-[#81969b]"><span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#4bb19d] opacity-60"/><span className="relative inline-flex h-2 w-2 rounded-full bg-[#4bb19d]"/></span>{user.role==='patient'?(me?.coveringProviderName?`Covering for ${me.assignedProviderName} · live chat`:'Your doctor · live chat'):'Patient · live chat'}</div></div>{user.role!=='patient'&&<Link href={`/patients/${patientId}`} className="ml-auto rounded-lg border border-[#dce8e8] px-2.5 py-1.5 text-[11px] font-semibold text-[#397d7e] hover:bg-[#f3f9f8]">View profile</Link>}</div>
     <div ref={scroller} className="flex-1 space-y-3 overflow-y-auto bg-[#f7fbfb] px-4 py-5 sm:px-6" style={{maxHeight:440,minHeight:320}} data-testid="list-messages">
-      {messages.isLoading?<ListSkeleton/>:messages.isError?<ErrorState retry={()=>messages.refetch()}/>:list.length===0&&pending.length===0?<EmptyState title="No messages yet" body={canSend?'Start the conversation below.':'Messages between the patient and care team will appear here.'} icon={MessageSquare}/>:list.map(m=>{const mine=m.senderId===user.id;const day=new Date(m.createdAt).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});const showDay=day!==lastDay;lastDay=day;return <div key={m.id}>{showDay&&<div className="my-2 text-center text-[10px] font-semibold uppercase tracking-wider text-[#9aadb1]">{day}</div>}<div data-testid={`message-${m.id}`} className={`flex ${mine?'justify-end':'justify-start'}`}><div className={`max-w-[80%] rounded-2xl px-3.5 py-2.5 text-sm leading-6 shadow-sm ${mine?'rounded-br-md bg-[#17647a] text-white':'rounded-bl-md border border-[#e3eded] bg-white text-[#31535e]'}`}>{!mine&&<div className="mb-0.5 text-[11px] font-bold text-[#2f8a84]">{m.senderName} <span className="font-normal text-[#91a4a8]">· {m.senderRole==='provider'?'Doctor':roleLabel(m.senderRole)}</span></div>}<div className="whitespace-pre-wrap break-words">{m.body}</div><div className={`mt-1 text-right text-[10px] ${mine?'text-white/60':'text-[#9aadb1]'}`}>{timeLabel(m.createdAt)}</div></div></div></div>})}
+      {messages.isLoading?<ListSkeleton/>:messages.isError?<ErrorState retry={()=>messages.refetch()}/>:list.length===0&&pending.length===0?<EmptyState title="No messages yet" body={canSend?'Start the conversation below.':'Messages between the patient and care team will appear here.'} icon={MessageSquare}/>:list.map(m=>{const mine=m.senderId===user.id;const day=new Date(m.createdAt).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});const showDay=day!==lastDay;lastDay=day;return <div key={m.id}>{showDay&&<div className="my-2 text-center text-[10px] font-semibold uppercase tracking-wider text-[#9aadb1]">{day}</div>}<div data-testid={`message-${m.id}`} className={`flex ${mine?'justify-end':'justify-start'}`}><div className={`max-w-[80%] rounded-2xl px-3.5 py-2.5 text-sm leading-6 shadow-sm ${mine?'rounded-br-md bg-[#17647a] text-white':'rounded-bl-md border border-[#e3eded] bg-white text-[#31535e]'}`}>{!mine&&<div className="mb-0.5 text-[11px] font-bold text-[#2f8a84]">{m.senderName} <span className="font-normal text-[#91a4a8]">· {m.senderRole==='provider'?'Doctor':roleLabel(m.senderRole)}</span></div>}<div className="whitespace-pre-wrap break-words">{m.body}</div><div className={`mt-1 text-right text-[10px] ${mine?'text-white/60':'text-[#9aadb1]'}`}>{timeLabel(m.createdAt)}{syncStateOf(m)&&<span data-testid="status-sync-record" data-sync={syncStateOf(m)}> · {syncStateOf(m)==='rejected'?`Not sent: ${syncErrorOf(m)||'refused by the server'}`:'Saved on this device · sends automatically'}</span>}</div></div></div></div>})}
       {pending.map(p=><div key={p.key} className="flex justify-end"><button type="button" disabled={!p.failed} onClick={()=>retry(p.key,p.body)} className={`max-w-[80%] rounded-2xl rounded-br-md px-3.5 py-2.5 text-left text-sm leading-6 shadow-sm ${p.failed?'border border-red-200 bg-red-50 text-red-800':'bg-[#17647a]/80 text-white'}`}><div className="whitespace-pre-wrap break-words">{p.body}</div><div className={`mt-1 text-right text-[10px] ${p.failed?'text-red-600':'text-white/60'}`}>{p.failed?'Not sent · tap to retry':'Sending…'}</div></button></div>)}
     </div>
     {canSend?<form onSubmit={submit} className="border-t border-[#eaf0f0] p-3 sm:p-4"><div className="flex items-end gap-2"><textarea data-testid="input-message" value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submit(e)}}} rows={1} maxLength={2000} placeholder={user.role==='patient'?`Write to ${doctorName||'your doctor'}…`:`Write to ${patientName.split(' ')[0]}…`} className="max-h-32 min-h-11 flex-1 resize-y rounded-xl border border-input bg-white px-3.5 py-2.5 text-sm outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"/><button data-testid="button-send-message" disabled={!text.trim()} aria-label="Send message" className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#17647a] text-white transition hover:bg-[#125366] disabled:opacity-50"><Send size={18}/></button></div>{error&&<p role="alert" className="mt-2 text-xs text-red-700">{error}</p>}<p className="mt-1.5 text-[10px] text-[#9aadb1]">Press Enter to send, Shift+Enter for a new line.</p></form>:<div className="border-t border-[#eaf0f0] px-4 py-3 text-xs text-[#81969b]">Caregiver accounts can read this conversation but not send messages.</div>}
@@ -837,29 +860,80 @@ function WellnessNotifications({user}:{user:AuthUser}){
   return null;
 }
 
-// ---- Offline mode: queue dose confirmations, sync when back online ----
-const QUEUE_KEY='caretrack-offline-doses';
-type QueuedDose={id:number;status:'taken'|'missed'|'skipped'|'scheduled';takenAt:string};
-const readQueue=():QueuedDose[]=>{try{return JSON.parse(localStorage.getItem(QUEUE_KEY)||'[]')}catch{return []}};
-const writeQueue=(q:QueuedDose[])=>{try{localStorage.setItem(QUEUE_KEY,JSON.stringify(q));window.dispatchEvent(new Event('caretrack-queue'))}catch{/* storage unavailable */}};
-const isNetworkError=(err:unknown)=>!navigator.onLine||err instanceof TypeError||(err as {status?:number})?.status===503;
-function queueDose(entry:QueuedDose){writeQueue([...readQueue().filter(q=>q.id!==entry.id),entry])}
-function useOnline(){const [online,setOnline]=useState(navigator.onLine);useEffect(()=>{const on=()=>setOnline(true),off=()=>setOnline(false);window.addEventListener('online',on);window.addEventListener('offline',off);return()=>{window.removeEventListener('online',on);window.removeEventListener('offline',off)}},[]);return online}
-/** Shows offline status and sends queued dose confirmations once the connection is back. */
-function OfflineSync(){
-  const online=useOnline(),qc=useQueryClient();
-  const [pending,setPending]=useState(readQueue().length),[synced,setSynced]=useState(0);
-  useEffect(()=>{const update=()=>setPending(readQueue().length);window.addEventListener('caretrack-queue',update);return()=>window.removeEventListener('caretrack-queue',update)},[]);
+// ---- Offline mode: connection and sync status (the saving and syncing itself is in offline.ts) ----
+const useSync=()=>useSyncExternalStore(subscribeSync,getSyncSnapshot);
+const clock=(t:number)=>new Date(t).toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+const SYNC_LOOK:Record<SyncState,[string,string]>={
+  pending:['Pending sync','bg-[#eef5fa] text-[#2f5d72]'],
+  syncing:['Syncing…','bg-[#eef5fa] text-[#2f5d72]'],
+  retrying:['Sync failed · retrying','bg-[#fdf3dd] text-[#7a5a1c]'],
+  blocked:['Sign in to sync','bg-[#fdf3dd] text-[#7a5a1c]'],
+  conflict:['Not synced · newer change kept','bg-[#fff0eb] text-[#ad5b45]'],
+  rejected:['Not saved by server','bg-[#fff0eb] text-[#ad5b45]'],
+};
+/** Marker on a record that is saved on this device but not (yet) on the server. */
+function SyncBadge({record}:{record:unknown}){
+  const online=useSync().online;
+  const raw=syncStateOf(record);
+  if(!raw)return null;
+  // While the device is offline a failed attempt is simply waiting for the connection.
+  const state=!online&&raw==='retrying'?'pending':raw;
+  const [label,cls]=SYNC_LOOK[state];
+  return <span data-testid="status-sync-record" data-sync={state} title={syncErrorOf(record)||'Saved on this device. It uploads automatically when there is a connection.'} className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase tracking-wide ${cls}`}>{label}</span>;
+}
+/** Header chip: Online / Offline / Syncing / N pending / Needs attention. */
+function SyncChip(){
+  const s=useSync();
+  const waiting=s.waiting+s.blocked;
+  const label=!s.online?'Offline':s.syncing?'Syncing':s.attention.length?'Needs attention':waiting?`${waiting} pending`:'Online';
+  const dot=!s.online?'bg-[#d9a23f]':s.attention.length?'bg-[#d9755e]':waiting||s.syncing?'bg-[#5b9bd5]':'bg-[#4cb7a3]';
+  const title=!s.online?'No connection to CareTrack. Supported changes are saved on this device.':waiting?`${waiting} change${waiting===1?'':'s'} saved on this device, waiting to upload.`:'Connected. Everything is saved to CareTrack.';
+  return <div data-testid="status-connection" data-online={s.online?'true':'false'} title={title} className="flex items-center gap-1.5 rounded-full border border-[#d9e8e8] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[#57737c]"><span className={`h-2 w-2 rounded-full ${dot} ${s.syncing?'animate-pulse':''}`}/>{label}</div>;
+}
+/** Banner under the header: offline notice, upload progress, retries, and changes that need the user. */
+function SyncBanner(){
+  const s=useSync(),[open,setOpen]=useState(false),[now,setNow]=useState(Date.now());
+  useEffect(()=>{if(!s.nextRetryAt)return;const t=window.setInterval(()=>setNow(Date.now()),1000);return()=>window.clearInterval(t)},[s.nextRetryAt]);
+  const n=(count:number)=>`${count} change${count===1?'':'s'}`;
+  let tone:'offline'|'info'|'done'='info',text='';
+  if(!s.online){tone='offline';text=`You’re offline. ${s.showingSavedAt?`Showing information saved on this device (last updated ${clock(s.showingSavedAt)}). It may not include the latest updates.`:'Showing information saved on this device.'} ${s.waiting?`${n(s.waiting)} saved on this device will upload automatically when you’re back online.`:'Dose updates, health readings, symptom notes and messages you enter are saved on this device and upload automatically.'}`}
+  else if(s.syncing)text=`Uploading ${n(s.waiting)} saved on this device…`;
+  else if(s.blocked){tone='offline';text=`Sign in again to upload ${n(s.blocked)} saved on this device.`}
+  else if(s.retrying){tone='offline';text=`${n(s.retrying)} couldn’t upload yet. Retrying automatically${s.nextRetryAt?` in ${Math.max(1,Math.ceil((s.nextRetryAt-now)/1000))}s`:''}.`}
+  else if(s.waiting)text=`${n(s.waiting)} waiting to upload…`;
+  else if(s.justSynced){tone='done';text=`Back online. ${n(s.justSynced)} saved to CareTrack.`}
+  if(!text&&!s.attention.length)return null;
+  const colors={offline:'bg-[#fdf3dd] text-[#7a5a1c]',info:'bg-[#eef5fa] text-[#2f5d72]',done:'bg-[#e6f4ed] text-[#2f7a5d]'}[tone];
+  return <div data-testid="banner-offline" data-tone={tone} role="status" className={`sticky top-[68px] z-20 text-xs font-semibold ${colors}`}>
+    {text&&<div className="flex items-center gap-2 px-4 py-2 sm:px-8">{s.online?<Wifi size={14} className="shrink-0"/>:<WifiOff size={14} className="shrink-0"/>}<span data-testid="text-sync-status" className="flex-1">{text}</span>{s.online&&(s.retrying>0||s.blocked>0)&&<button data-testid="button-sync-retry" onClick={()=>void retryAll()} className="shrink-0 rounded-lg border border-[#e6d3a8] bg-white/70 px-2.5 py-1 font-semibold">Retry now</button>}</div>}
+    {s.attention.length>0&&<div className="border-t border-[#f3d4c9] bg-[#fff4f0] px-4 py-2 text-[#9a4b39] sm:px-8">
+      <button data-testid="button-sync-review" onClick={()=>setOpen(!open)} className="flex w-full items-center gap-2 text-left"><CircleHelp size={14} className="shrink-0"/><span className="flex-1">{n(s.attention.length)} couldn’t be saved to CareTrack and need{s.attention.length===1?'s':''} your attention.</span><span className="underline">{open?'Hide':'Review'}</span></button>
+      {open&&<ul className="mt-2 space-y-2 pb-1" data-testid="list-sync-attention">{s.attention.map(e=><li key={e.id} className="rounded-xl border border-[#f0cfc4] bg-white p-3 font-normal text-[#6b4a42]">
+        <div className="font-semibold text-[#8a3f2f]">{e.label} <span className="font-normal text-[#a07a70]">· made {clock(new Date(e.capturedAt).getTime())}</span></div>
+        <div className="mt-1">{e.lastError}</div>
+        <div className="mt-2 flex flex-wrap gap-2">{e.state==='conflict'&&<button data-testid={`button-keep-mine-${e.id}`} onClick={()=>void keepMine(e.id)} className="rounded-lg bg-[#17647a] px-3 py-1.5 text-xs font-semibold text-white">Use my change instead</button>}<button data-testid={`button-discard-${e.id}`} onClick={()=>{if(e.state==='conflict'||window.confirm('Remove this change from this device? It was not saved to CareTrack.'))void discardChange(e.id)}} className="rounded-lg border border-[#e6c9c0] px-3 py-1.5 text-xs font-semibold">{e.state==='conflict'?'Keep the newer change':'Remove from this device'}</button></div>
+      </li>)}</ul>}
+    </div>}
+  </div>;
+}
+/** After sign-in, downloads the main screens' data so they also open offline before being visited. */
+function useWarmOfflineData(user?:AuthUser){
   useEffect(()=>{
-    let stop=false;
-    const flush=async()=>{if(!navigator.onLine)return;const queue=readQueue();if(!queue.length)return;let done=0;
-      for(const item of queue){try{await updateDoseStatus(item.id,{status:item.status,...(item.status==='taken'?{takenAt:item.takenAt}:{})});writeQueue(readQueue().filter(q=>q.id!==item.id));done+=1}catch(err){if(isNetworkError(err))break;writeQueue(readQueue().filter(q=>q.id!==item.id))}}
-      if(done&&!stop){setSynced(done);qc.invalidateQueries({queryKey:getListDosesQueryKey()});qc.invalidateQueries({queryKey:getGetAnalyticsQueryKey()});setTimeout(()=>setSynced(0),5000)}};
-    void flush();const timer=setInterval(flush,20_000);window.addEventListener('online',flush);
-    return()=>{stop=true;clearInterval(timer);window.removeEventListener('online',flush)};
-  },[qc]);
-  if(online&&!pending&&!synced)return null;
-  return <div data-testid="banner-offline" role="status" className={`sticky top-[68px] z-20 flex items-center gap-2 px-4 py-2 text-xs font-semibold sm:px-8 ${!online?'bg-[#fdf3dd] text-[#7a5a1c]':synced?'bg-[#e6f4ed] text-[#2f7a5d]':'bg-[#eef5fa] text-[#2f5d72]'}`}>{!online?<WifiOff size={14}/>:<Wifi size={14}/>}{!online?`You’re offline. Showing saved information.${pending?` ${pending} dose update${pending===1?'':'s'} will sync when you’re back online.`:' Doses you log will be saved and synced later.'}`:synced?`Back online. ${synced} dose update${synced===1?'':'s'} synced.`:`Syncing ${pending} saved dose update${pending===1?'':'s'}…`}</div>;
+    if(!user)return;
+    let cancelled=false;
+    const run=async()=>{
+      if(!navigator.onLine)return;
+      for(const path of ['/api/patients','/api/medications','/api/appointments','/api/notifications','/api/messages/threads',`/api/doses?date=${dateToday()}`]){if(cancelled)return;await customFetch(path).catch(()=>null)}
+      if(user.role!=='patient'&&user.role!=='caregiver')return;
+      const patients=await customFetch<Patient[]>('/api/patients').catch(()=>null);
+      for(const p of (Array.isArray(patients)?patients:[]).slice(0,3))for(const path of [`/api/patients/${p.id}/health-metrics`,`/api/patients/${p.id}/health-logs`,`/api/patients/${p.id}/messages`,`/api/patients/${p.id}/medication-progress`]){if(cancelled)return;await customFetch(path).catch(()=>null)}
+    };
+    const online=()=>{void run()};
+    void run();
+    window.addEventListener('online',online);
+    return()=>{cancelled=true;window.removeEventListener('online',online)};
+  // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[user?.id,user?.role]);
 }
 
 const RISK_COLORS:Record<string,string>={low:'#4bb19d',moderate:'#d6ad5b',high:'#cf7865'};
@@ -1086,37 +1160,59 @@ function HealthMetricsPanel({patientId,canRecord}:{patientId:number;canRecord:bo
   const [metricType,setMetricType]=useState<HealthMetricInputMetricType>('blood_pressure');
   const [value,setValue]=useState('');
   const [secondary,setSecondary]=useState('');
+  const [symptoms,setSymptoms]=useState('');
+  const [note,setNote]=useState('');
+  const [feedback,setFeedback]=useState<{ok:boolean;text:string}|null>(null);
   const rows=(metrics.data||[]) as HealthMetric[];
+  const logRows=(logs.data||[]) as HealthLog[];
   const chartRows=[...rows].filter((row)=>row.metricType===metricType).reverse().slice(-14).map((row,index)=>({name:`${index+1}`,value:row.value}));
   const units:Record<string,string>={blood_pressure:'mmHg',blood_sugar:'mg/dL',weight:'kg',heart_rate:'bpm',temperature:'°C'};
-  const submit=(event:FormEvent)=>{event.preventDefault();const parsed=Number(value);if(!Number.isFinite(parsed)||parsed<=0)return;
-    createMetric.mutate({patientId,data:{metricType,value:parsed,secondaryValue:metricType==='blood_pressure'&&secondary?Number(secondary):undefined,unit:units[metricType]}},{onSuccess:()=>{setValue('');setSecondary('');qc.invalidateQueries({queryKey:getListHealthMetricsQueryKey(patientId)});}});
+  const saved=(result:unknown,what:string)=>setFeedback({ok:true,text:syncStateOf(result)?`${what} saved on this device. It will upload automatically when you’re back online.`:`${what} saved.`});
+  const failed=(err:unknown)=>setFeedback({ok:false,text:apiError(err,'Couldn’t save. Check your connection and try again.')});
+  const submit=(event:FormEvent)=>{event.preventDefault();setFeedback(null);const parsed=Number(value),second=Number(secondary);
+    if(!Number.isFinite(parsed)||parsed<=0||(metricType==='blood_pressure'&&(!Number.isFinite(second)||second<=0))){setFeedback({ok:false,text:'Enter a valid number.'});return}
+    createMetric.mutate({patientId,data:{metricType,value:parsed,secondaryValue:metricType==='blood_pressure'?second:undefined,unit:units[metricType]}},{onSuccess:(result)=>{setValue('');setSecondary('');saved(result,'Reading');qc.invalidateQueries({queryKey:getListHealthMetricsQueryKey(patientId)})},onError:failed});
   };
-  return <Card><div className="grid gap-5 p-5 lg:grid-cols-[1fr_280px] lg:p-6">
+  const submitLog=(event:FormEvent)=>{event.preventDefault();setFeedback(null);const list=symptoms.split(',').map((x)=>x.trim()).filter(Boolean).slice(0,20);
+    if(!list.length&&!note.trim()){setFeedback({ok:false,text:'Add at least one symptom or a note.'});return}
+    createLog.mutate({patientId,data:{symptoms:list,...(note.trim()?{notes:note.trim()}:{})}},{onSuccess:(result)=>{setSymptoms('');setNote('');saved(result,'Symptom note');qc.invalidateQueries({queryKey:getListHealthLogsQueryKey(patientId)})},onError:failed});
+  };
+  const when=(value:string)=>new Date(value).toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+  const inputClass='h-10 rounded-xl border border-[#dce7e7] bg-white px-3 text-sm';
+  return <Card testId="panel-health"><div className="grid gap-5 p-5 lg:grid-cols-[1fr_280px] lg:p-6">
     <div><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-bold text-[#254954]">Health metrics</h2><p className="mt-1 text-xs text-[#81969b]">Home measurements and trend history</p></div>
-      <select value={metricType} onChange={(event)=>setMetricType(event.target.value as HealthMetricInputMetricType)} className="h-10 rounded-xl border border-[#dce7e7] bg-white px-3 text-sm">{[['blood_pressure','Blood pressure'],['blood_sugar','Blood sugar'],['weight','Weight'],['heart_rate','Heart rate'],['temperature','Temperature']].map(([key,label])=> <option key={key} value={key}>{label}</option>)}</select></div>
+      <select data-testid="select-metric-type" value={metricType} onChange={(event)=>setMetricType(event.target.value as HealthMetricInputMetricType)} className="h-10 rounded-xl border border-[#dce7e7] bg-white px-3 text-sm">{[['blood_pressure','Blood pressure'],['blood_sugar','Blood sugar'],['weight','Weight'],['heart_rate','Heart rate'],['temperature','Temperature']].map(([key,label])=> <option key={key} value={key}>{label}</option>)}</select></div>
+      {metrics.isError&&<ErrorState retry={()=>metrics.refetch()}/>}
       <div className="mt-4 h-52">{chartRows.length?<ResponsiveContainer width="100%" height="100%"><LineChart data={chartRows}><CartesianGrid strokeDasharray="3 3" vertical={false}/><XAxis dataKey="name" tick={{fontSize:11}}/><YAxis tick={{fontSize:11}}/><Tooltip/><Line type="monotone" dataKey="value" stroke="#287d8e" strokeWidth={2.5} dot={{r:3}}/></LineChart></ResponsiveContainer>:<EmptyState title="No measurements yet" body="Recorded metrics will appear here."/>}</div>
-      <div className="mt-3 space-y-2">{rows.slice(0,4).map((row)=><div key={row.id} className={`flex items-center justify-between rounded-xl px-3 py-2 text-sm ${row.outOfRange?'bg-[#fff0ed] text-[#b14b3d]':'bg-[#f5f9f8] text-[#3d5e67]'}`}><span>{row.metricType.replaceAll('_',' ')}</span><strong>{row.value}{row.secondaryValue!=null?`/${row.secondaryValue}`:''} {row.unit}{row.outOfRange?' · Out of range':''}</strong></div>)}</div>
+      <div className="mt-3 space-y-2" data-testid="list-health-metrics">{rows.slice(0,5).map((row)=><div key={row.id} data-testid={`row-health-metric-${row.id}`} className={`flex flex-wrap items-center justify-between gap-2 rounded-xl px-3 py-2 text-sm ${row.outOfRange?'bg-[#fff0ed] text-[#b14b3d]':'bg-[#f5f9f8] text-[#3d5e67]'}`}><span className="flex items-center gap-2">{row.metricType.replaceAll('_',' ')}<span className="text-[11px] text-[#8aa0a4]">{when(row.recordedAt)}</span><SyncBadge record={row}/></span><strong>{row.value}{row.secondaryValue!=null?`/${row.secondaryValue}`:''} {row.unit}{row.outOfRange?' · Out of range':''}</strong></div>)}</div>
+      <div className="mt-5"><h3 className="text-sm font-bold text-[#31535e]">Recent symptom notes</h3>
+        {logRows.length===0?<p className="mt-2 text-xs text-[#8aa0a4]">No symptom notes yet.</p>:<div className="mt-2 space-y-2" data-testid="list-health-logs">{logRows.slice(0,5).map((log)=><div key={log.id} data-testid={`row-health-log-${log.id}`} className="rounded-xl bg-[#f5f9f8] px-3 py-2 text-sm text-[#3d5e67]"><div className="flex flex-wrap items-center gap-2"><strong>{log.symptoms.length?log.symptoms.join(', '):'Note'}</strong><span className="text-[11px] text-[#8aa0a4]">{when(log.recordedAt)}</span><SyncBadge record={log}/></div>{log.notes&&<div className="mt-1 text-xs text-[#5f7a82]">{log.notes}</div>}</div>)}</div>}
+      </div>
     </div>
-    {canRecord&&<form onSubmit={submit} className="rounded-2xl bg-[#f6faf9] p-4">
-      <h3 className="text-sm font-bold text-[#31535e]">Record a reading</h3>
-      {metricType==='blood_pressure'?<div className="mt-3 grid grid-cols-2 gap-2"><input value={value} onChange={(event)=>setValue(event.target.value)} required inputMode="numeric" placeholder="Systolic" className="h-10 rounded-xl border border-[#dce7e7] px-3 text-sm"/><input value={secondary} onChange={(event)=>setSecondary(event.target.value)} required inputMode="numeric" placeholder="Diastolic" className="h-10 rounded-xl border border-[#dce7e7] px-3 text-sm"/></div>:<input value={value} onChange={(event)=>setValue(event.target.value)} required inputMode="decimal" placeholder={units[metricType]} className="mt-3 h-10 w-full rounded-xl border border-[#dce7e7] px-3 text-sm"/>}
-      <button type="submit" disabled={createMetric.isPending} className="mt-3 h-10 w-full rounded-xl bg-[#17647a] text-sm font-semibold text-white">{createMetric.isPending?'Saving...':'Save reading'}</button>
-      <button
-        type="button"
-        disabled={createLog.isPending}
-        onClick={()=>{
-          createLog.mutate(
-            {patientId,data:{symptoms:['fatigue']}},
-            {onSuccess:()=>qc.invalidateQueries({queryKey:getListHealthLogsQueryKey(patientId)})},
-          );
-        }}
-        className="mt-2 h-10 w-full rounded-xl border border-[#dce7e7] text-sm font-semibold text-[#47737b]"
-      >
-        Add fatigue note
-      </button>
-    </form>}
+    {canRecord&&<div className="space-y-3">
+      <form onSubmit={submit} className="rounded-2xl bg-[#f6faf9] p-4">
+        <h3 className="text-sm font-bold text-[#31535e]">Record a reading</h3>
+        {metricType==='blood_pressure'?<div className="mt-3 grid grid-cols-2 gap-2"><input data-testid="input-metric-value" value={value} onChange={(event)=>setValue(event.target.value)} required inputMode="numeric" placeholder="Systolic" className={inputClass}/><input data-testid="input-metric-secondary" value={secondary} onChange={(event)=>setSecondary(event.target.value)} required inputMode="numeric" placeholder="Diastolic" className={inputClass}/></div>:<input data-testid="input-metric-value" value={value} onChange={(event)=>setValue(event.target.value)} required inputMode="decimal" placeholder={units[metricType]} className={`mt-3 w-full ${inputClass}`}/>}
+        <button data-testid="button-save-reading" type="submit" disabled={createMetric.isPending} className="mt-3 h-10 w-full rounded-xl bg-[#17647a] text-sm font-semibold text-white disabled:opacity-60">{createMetric.isPending?'Saving...':'Save reading'}</button>
+      </form>
+      <form onSubmit={submitLog} className="rounded-2xl bg-[#f6faf9] p-4">
+        <h3 className="text-sm font-bold text-[#31535e]">How are you feeling?</h3>
+        <input data-testid="input-symptoms" value={symptoms} onChange={(event)=>setSymptoms(event.target.value)} placeholder="Symptoms, e.g. fatigue, headache" maxLength={400} className={`mt-3 w-full ${inputClass}`}/>
+        <textarea data-testid="input-symptom-note" value={note} onChange={(event)=>setNote(event.target.value)} placeholder="Note (optional)" maxLength={1000} rows={2} className="mt-2 w-full rounded-xl border border-[#dce7e7] bg-white px-3 py-2 text-sm"/>
+        <button data-testid="button-save-symptoms" type="submit" disabled={createLog.isPending} className="mt-2 h-10 w-full rounded-xl border border-[#dce7e7] bg-white text-sm font-semibold text-[#47737b] disabled:opacity-60">{createLog.isPending?'Saving...':'Save symptom note'}</button>
+      </form>
+      {feedback&&<div role={feedback.ok?'status':'alert'} data-testid="status-health-feedback" className={`rounded-xl px-3 py-2 text-xs font-semibold ${feedback.ok?'bg-[#eef8f4] text-[#2f8a74]':'bg-red-50 text-red-700'}`}>{feedback.text}</div>}
+    </div>}
   </div></Card>;
+}
+/** Health readings and symptom notes for patients and caregivers (works offline; see offline.ts). */
+function MyHealthPage({user}:{user:AuthUser}){
+  const patients=useListPatients();
+  const patient=(patients.data||[])[0];
+  return <div className="page-enter">
+    <PageHeading eyebrow="Health observations" title={user.role==='patient'?'My health':`Health · ${patient?.name||'patient'}`} description="Record home measurements and how you’re feeling. Entries are saved on this device first, so this also works without internet."/>
+    {patients.isLoading?<SkeletonGrid/>:patients.isError?<Card><ErrorState retry={()=>patients.refetch()}/></Card>:!patient?<Card><EmptyState title="No linked patient profile" body="Your account isn’t linked to a patient profile yet." icon={HeartPulse}/></Card>:<HealthMetricsPanel patientId={patient.id} canRecord/>}
+  </div>;
 }
 function Info({label,value}:{label:string;value:string}){return <div><div className="text-[10px] font-bold uppercase tracking-wider text-[#8ba0a4]">{label}</div><div data-testid={`text-patient-${label.toLowerCase().replaceAll(' ','-')}`} className="mt-1 text-sm font-medium leading-5 text-[#3d5e67]">{value}</div></div>}
 function MedicationMini({med}:{med:Medication}){return <div data-testid={`card-patient-medication-${med.id}`} className="flex items-center gap-3 rounded-xl bg-[#f5f9f8] p-3"><div className="grid h-9 w-9 place-items-center rounded-lg bg-[#e2f2ee] text-[#39847e]"><Pill size={17}/></div><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-[#355761]">{med.name}</div><div className="mt-0.5 text-xs text-[#80969b]">{med.dosage} · {med.scheduleTimes.join(', ')||med.frequency.replace('_',' ')}</div></div></div>}
