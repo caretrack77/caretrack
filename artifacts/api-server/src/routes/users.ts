@@ -4,7 +4,7 @@ import bcrypt from "bcryptjs";
 import { CreateUserResponse, ListUsersResponse, UpdateUserBody, UpdateUserResponse, CreateUserBody, UpdateUserParams } from "@workspace/api-zod";
 import { db, privacyConsentsTable, usersTable } from "@workspace/db";
 import { PRIVACY_NOTICE_VERSION } from "../lib/security-config";
-import { authenticate, currentUser, passwordProblem, requireRoles, requireUser } from "../lib/auth";
+import { authenticate, currentUser, passwordProblem, phoneVerifiedFor, requireRoles, requireUser } from "../lib/auth";
 import { writeAuditLog } from "../lib/audit";
 
 const router: IRouter = Router();
@@ -20,7 +20,12 @@ async function withConsent<T extends { id: number; createdAt: Date }>(users: T[]
     ? new Set((await db.select({ userId: privacyConsentsTable.userId }).from(privacyConsentsTable)
       .where(and(inArray(privacyConsentsTable.userId, ids), eq(privacyConsentsTable.version, PRIVACY_NOTICE_VERSION)))).map((row) => row.userId))
     : new Set<number>();
-  return users.map((user) => ({ ...user, createdAt: user.createdAt.toISOString(), privacyConsentAccepted: accepted.has(user.id) }));
+  return Promise.all(users.map(async (user) => ({
+    ...user,
+    createdAt: user.createdAt.toISOString(),
+    privacyConsentAccepted: accepted.has(user.id),
+    phoneVerified: await phoneVerifiedFor(user.id),
+  })));
 }
 
 router.get("/users", async (_req, res): Promise<void> => {

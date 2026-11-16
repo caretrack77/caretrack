@@ -1601,6 +1601,7 @@ components:
         active: { type: boolean }
         mustChangePassword: { type: boolean }
         privacyConsentAccepted: { type: boolean }
+        phoneVerified: { type: boolean, description: "The account's current mobile number was confirmed with an SMS code." }
       required: [id, name, email, role, active, mustChangePassword, privacyConsentAccepted]
     PrivacyConsentInput:
       type: object

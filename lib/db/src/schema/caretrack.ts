@@ -22,6 +22,10 @@ export const usersTable = pgTable(
     role: text("role").notNull(),
     // Mobile number used for SMS login codes.
     phone: text("phone"),
+    // SMS OTP: the number this account proved it owns (by entering a code texted to it) and when.
+    // A number counts as verified only while it still equals the account's current number.
+    verifiedPhone: text("verified_phone"),
+    phoneVerifiedAt: timestamp("phone_verified_at", { withTimezone: true }),
     // Set when an admin creates the account or resets its password.
     mustChangePassword: boolean("must_change_password").notNull().default(false),
     active: boolean("active").notNull().default(true),
@@ -434,6 +438,8 @@ export const otpChallengesTable = pgTable(
       .references(() => usersTable.id, { onDelete: "cascade" }),
     codeHash: text("code_hash"),
     channel: text("channel"),
+    // The mobile number the current code was texted to (SMS only), so verifying it proves that number.
+    smsPhone: text("sms_phone"),
     codeExpiresAt: timestamp("code_expires_at", { withTimezone: true }),
     lastSentAt: timestamp("last_sent_at", { withTimezone: true }),
     attempts: integer("attempts").notNull().default(0),

@@ -419,6 +419,8 @@ export interface AuthUser {
   active: boolean;
   mustChangePassword: boolean;
   privacyConsentAccepted: boolean;
+  /** The account's current mobile number was confirmed with an SMS code. */
+  phoneVerified?: boolean;
 }
 
 export interface LoginChallenge {

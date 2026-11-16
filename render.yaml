@@ -29,13 +29,19 @@ services:
       # --- login codes ---
       - key: OTP_ENABLED
         value: "true"
-      # Shows the code on the sign-in screen when it can't be sent (needed for the demo accounts).
-      # Set to "false" once real accounts get their codes by email/SMS.
+      # Demo accounts always show their code on screen; regular accounts never do (built in).
       - key: OTP_OFFLINE_FALLBACK
         value: "true"
       - key: GMAIL_USER
         sync: false
       - key: GMAIL_APP_PASSWORD
+        sync: false
+      # --- SMS login codes: SMS Gateway for Android (free app + free relay), see docs/SMS_OTP.md ---
+      - key: SMS_PROVIDER
+        value: sms-gate
+      - key: SMS_GATEWAY_USER # username shown in the app's Cloud Server section
+        sync: false
+      - key: SMS_GATEWAY_PASSWORD # password shown in the app's Cloud Server section
         sync: false
       # --- optional AI ---
       - key: GROQ_API_KEY

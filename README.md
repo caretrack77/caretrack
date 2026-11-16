@@ -85,9 +85,9 @@ docs/
 | `OTP_ENABLED` | No | Enables the second login step; enabled in the example configuration |
 | `OTP_OFFLINE_FALLBACK` | No | Shows a code in the local demo if delivery is unavailable; disable for production. Production defaults to disabled. |
 | `GMAIL_USER`, `GMAIL_APP_PASSWORD` | No | Gmail app-password delivery for login codes |
-| `SMS_PROVIDER` | No | `semaphore`, `twilio`, or `android-gateway` SMS delivery |
+| `SMS_PROVIDER` | No | `sms-gate` (recommended, free: SMS Gateway for Android on your own phone, see [docs/SMS_OTP.md](docs/SMS_OTP.md)), `android-gateway`, `semaphore` or `twilio` |
 | `SEMAPHORE_*`, `TWILIO_*` | No | Credentials and sender details for the selected SMS provider |
-| `SMS_GATEWAY_URL`, `SMS_GATEWAY_USER`, `SMS_GATEWAY_PASSWORD` | No | Optional Android SMS Gateway on the same local network |
+| `SMS_GATEWAY_USER`, `SMS_GATEWAY_PASSWORD`, `SMS_GATEWAY_URL` | No | SMS Gateway for Android credentials (shown in the app); the URL is only needed for Local mode |
 
 Never put API keys, app passwords, session secrets, or real patient information in source control. Configure real recipient contact details before testing live OTP delivery; seeded demo addresses and phone numbers are fictional.
 
@@ -134,7 +134,7 @@ The database/API retains the internal role identifier `provider` for doctors. Pr
 
 ### Accounts, privacy, and permissions
 
-- Users sign in with a password and, when OTP is enabled, verify a 6-digit one-time code by SMS or email. Codes expire, attempts are limited, and a resend cooldown applies.
+- Users sign in with a password and, when OTP is enabled, verify a 6-digit one-time code by SMS or email. Real SMS is sent through an Android phone running SMS Gateway for Android ([docs/SMS_OTP.md](docs/SMS_OTP.md)); the number is marked verified after the first successful SMS code. Demo accounts show their code on screen instead and are never texted. Codes are hashed, expire, attempts are limited, and a resend cooldown applies.
 - The admin can create, edit, deactivate, and reset team accounts. Temporary passwords must be changed at first use. Users can change their password from My account; password changes invalidate other sessions.
 - A versioned privacy-consent record is required before protected application APIs are available.
 - The interface is role-specific, but authorization is also enforced on the API. Doctors see assigned or covered patients, caregivers see linked patients, and patients see their own records. Caregivers can record supported patient doses and health observations but cannot edit medication/profile data or send messages.

@@ -8,9 +8,12 @@ export const loginRateLimit = rateLimit({
   message: { error: "Too many attempts. Please wait before trying again." },
 });
 
+// Per network address. People on one Wi-Fi (a classroom, a clinic) share an address, so 5 locked
+// out everyone after a few sign-ins. Each sign-in is still limited separately: 30 s between codes,
+// 5 wrong attempts, 5-minute expiry (auth.ts), which is what protects the codes themselves.
 export const otpRequestRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
-  limit: 5,
+  limit: 20,
   standardHeaders: "draft-7",
   legacyHeaders: false,
   message: { error: "Too many code requests. Please wait before trying again." },

@@ -42,6 +42,20 @@ export async function ensureIdempotencyStore(): Promise<void> {
   `);
 }
 
+/**
+ * Every additive schema change the running code needs, created if missing (never altered or
+ * dropped), so a deployment works without a separate `pnpm db:push`. Run before the server
+ * accepts requests: queries select these columns. Mirrors lib/db/src/schema/caretrack.ts.
+ */
+export async function ensureSchemaAdditions(): Promise<void> {
+  await ensureIdempotencyStore();
+  await pool.query(`
+    ALTER TABLE "caretrack_users" ADD COLUMN IF NOT EXISTS "verified_phone" text;
+    ALTER TABLE "caretrack_users" ADD COLUMN IF NOT EXISTS "phone_verified_at" timestamp with time zone;
+    ALTER TABLE "caretrack_otp_challenges" ADD COLUMN IF NOT EXISTS "sms_phone" text;
+  `);
+}
+
 /** Removes keys older than the retention period. Run by the background job. */
 export async function pruneIdempotencyKeys(): Promise<void> {
   await db.delete(idempotencyKeysTable).where(lt(idempotencyKeysTable.createdAt, new Date(Date.now() - KEEP_KEYS_MS)));

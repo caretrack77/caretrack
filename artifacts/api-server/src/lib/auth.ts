@@ -29,14 +29,14 @@ import {
 } from "@workspace/api-zod";
 import { writeAuditLog } from "./audit";
 import { logger } from "./logger";
-import { sendEmail, sendSms, undeliverableEmail } from "./otp-delivery";
+import { isDemoAccountEmail, sendEmail, sendSmsDetailed, toInternational, undeliverableEmail, type SmsResult } from "./otp-delivery";
 import {
   loginRateLimit,
   otpRequestRateLimit,
   otpVerifyRateLimit,
   passwordRateLimit,
 } from "./rate-limit";
-import { otpOfflineFallbackAllowed, PRIVACY_NOTICE_VERSION } from "./security-config";
+import { PRIVACY_NOTICE_VERSION } from "./security-config";
 export { PRIVACY_NOTICE_VERSION } from "./security-config";
 
 const SESSION_COOKIE = "caretrack_session";
@@ -259,6 +259,14 @@ async function phoneFor(user: typeof usersTable.$inferSelect): Promise<string | 
   return patient?.phone || null;
 }
 
+/** True while the account's current mobile number is the one it confirmed with an SMS code. */
+export async function phoneVerifiedFor(userId: number): Promise<boolean> {
+  const [row] = await db.select().from(usersTable).where(eq(usersTable.id, userId)).limit(1);
+  if (!row?.verifiedPhone) return false;
+  const current = await phoneFor(row);
+  return !!current && toInternational(current) === row.verifiedPhone;
+}
+
 async function startSession(req: Request, res: Response, userId: number): Promise<void> {
   const token = randomBytes(32).toString("base64url");
   await db.insert(sessionsTable).values({
@@ -386,9 +394,13 @@ router.post("/auth/otp/send", otpRequestRateLimit, async (req, res): Promise<voi
     return;
   }
   const channel = parsed.data.channel;
-  const phone = channel === "sms" ? await phoneFor(user) : null;
-  if (channel === "sms" && !phone) {
-    res.status(400).json({ error: "No mobile number is saved for this account. Use email instead." });
+  // Account type comes from the server's fixed list of seeded demo accounts, never from anything
+  // the client sends. Demo accounts: the code is shown on screen, nothing is texted or emailed,
+  // and no phone number is needed, so panelists can try CareTrack without a personal number.
+  const demo = isDemoAccountEmail(user.email);
+  const phone = channel === "sms" && !demo ? await phoneFor(user) : null;
+  if (channel === "sms" && !demo && !phone) {
+    res.status(400).json({ error: "No mobile number is saved for this account. Ask your administrator to add it, or use email." });
     return;
   }
 
@@ -398,40 +410,56 @@ router.post("/auth/otp/send", otpRequestRateLimit, async (req, res): Promise<voi
     .set({
       codeHash: hashToken(code + challenge.id),
       channel,
+      smsPhone: phone ? toInternational(phone) : null,
       codeExpiresAt: new Date(Date.now() + OTP_CODE_LIFETIME_MS),
       lastSentAt: new Date(),
       attempts: 0,
     })
     .where(eq(otpChallengesTable.id, challenge.id));
 
-  const text = `Your CareTrack login code is ${code}. It expires in 5 minutes. Do not share this code with anyone.`;
-  const delivered =
-    channel === "sms"
-      ? await sendSms(phone!, text)
-      : await sendEmail(user.email, "Your CareTrack login code", text);
-
-  // Offline mode: with no internet or no provider configured, show the code on screen.
-  const showOffline = !delivered && otpOfflineFallbackAllowed();
-  if (!delivered) {
-    logger.info({ userId: user.id, channel }, `Offline OTP for ${user.email}: ${code}`);
-  }
-  if (!delivered && !showOffline) {
-    res.status(503).json({ error: "We couldn't send the code right now. Try the other option or try again later." });
+  if (demo) {
+    await writeAuditLog(user.id, "otp_sent", "user", user.id, { channel, delivered: false, demoAccount: true });
+    res.json(
+      SendLoginOtpResponse.parse({
+        channel,
+        sentTo: "this screen",
+        delivered: false,
+        offlineCode: code,
+        message: "Demo account: your code is shown here. No text message or email is sent for demo accounts.",
+        expiresInSeconds: OTP_CODE_LIFETIME_MS / 1000,
+      }),
+    );
     return;
   }
-  await writeAuditLog(user.id, "otp_sent", "user", user.id, { channel, delivered });
+
+  // Regular accounts: the code is only ever sent to the user's own phone or inbox. It is never
+  // returned to the screen or written to the logs.
+  const text = `Your CareTrack login code is ${code}. It expires in 5 minutes. Do not share this code with anyone.`;
+  // SMS: the gateway drops it if it can't be sent within the code's lifetime.
+  const sms: SmsResult | null = channel === "sms" ? await sendSmsDetailed(phone!, text, OTP_CODE_LIFETIME_MS / 1000) : null;
+  const delivered = sms ? sms.ok : await sendEmail(user.email, "Your CareTrack login code", text);
+  await writeAuditLog(user.id, "otp_sent", "user", user.id, { channel, delivered, ...(sms ? { smsStatus: sms.status } : {}) });
+  if (!delivered) {
+    logger.info({ userId: user.id, channel, smsStatus: sms?.status }, "Login code could not be delivered");
+    res.status(503).json({
+      error: channel === "sms"
+        ? "We couldn't send the text message right now. The CareTrack SMS phone may be off or offline. Try again in a minute, or choose email."
+        : undeliverableEmail(user.email)
+          ? "This account's email address can't receive mail. Use SMS, or ask your administrator to update the email."
+          : "We couldn't send the email right now. Try SMS or try again later.",
+    });
+    return;
+  }
   const sentTo = channel === "sms" ? maskPhone(phone!) : maskEmail(user.email);
   res.json(
     SendLoginOtpResponse.parse({
       channel,
       sentTo,
-      delivered,
-      offlineCode: showOffline ? code : null,
-      message: delivered
-        ? `We sent a 6-digit code to ${sentTo}.`
-        : channel === "email" && undeliverableEmail(user.email)
-          ? `${user.email} is not a real inbox, so your code is shown here. Add a real Gmail address to this account under Team access.`
-          : `Offline mode: ${channel === "sms" ? "SMS" : "email"} could not be sent, so your code is shown here.`,
+      delivered: true,
+      offlineCode: null,
+      message: sms?.status === "queued"
+        ? `Your code is on its way by text message to ${sentTo}. It usually arrives within a minute.`
+        : `We sent a 6-digit code to ${sentTo}.`,
       expiresInSeconds: OTP_CODE_LIFETIME_MS / 1000,
     }),
   );
@@ -478,13 +506,28 @@ router.post("/auth/otp/verify", otpVerifyRateLimit, async (req, res): Promise<vo
     res.status(401).json({ error: "This account is not active." });
     return;
   }
-  await db
+  const [consumed] = await db
     .update(otpChallengesTable)
     .set({ consumedAt: new Date() })
-    .where(eq(otpChallengesTable.id, challenge.id));
+    .where(and(eq(otpChallengesTable.id, challenge.id), isNull(otpChallengesTable.consumedAt)))
+    .returning({ id: otpChallengesTable.id });
+  if (!consumed) {
+    res.status(401).json({ error: "This code was already used. Please sign in again." });
+    return;
+  }
+  // The right code texted to a number proves the user has that phone: mark it verified,
+  // but only if it is still the account's current number.
+  if (challenge.channel === "sms" && challenge.smsPhone) {
+    const current = await phoneFor(user);
+    if (current && toInternational(current) === challenge.smsPhone) {
+      await db.update(usersTable).set({ verifiedPhone: challenge.smsPhone, phoneVerifiedAt: new Date() }).where(eq(usersTable.id, user.id));
+      user.verifiedPhone = challenge.smsPhone;
+      await writeAuditLog(user.id, "phone_verified", "user", user.id, { phone: maskPhone(challenge.smsPhone) });
+    }
+  }
   await startSession(req, res, user.id);
   await writeAuditLog(user.id, "login", "user", user.id, { method: `otp_${challenge.channel}` });
-  res.json(VerifyLoginOtpResponse.parse(await publicUser(user)));
+  res.json(VerifyLoginOtpResponse.parse({ ...(await publicUser(user)), phoneVerified: await phoneVerifiedFor(user.id) }));
 });
 
 router.post("/auth/change-password", passwordRateLimit, authenticate, requireUser, async (req, res): Promise<void> => {
@@ -533,8 +576,9 @@ router.post("/auth/privacy-consent", authenticate, requireUser, async (req, res)
   res.json({ accepted: true, version: PRIVACY_NOTICE_VERSION });
 });
 
-router.get("/auth/me", authenticate, requireUser, (_req, res): void => {
-  res.json(GetCurrentUserResponse.parse(currentUser(res)));
+router.get("/auth/me", authenticate, requireUser, async (_req, res): Promise<void> => {
+  const user = currentUser(res)!;
+  res.json(GetCurrentUserResponse.parse({ ...user, phoneVerified: await phoneVerifiedFor(user.id) }));
 });
 
 router.post("/auth/logout", async (req, res): Promise<void> => {

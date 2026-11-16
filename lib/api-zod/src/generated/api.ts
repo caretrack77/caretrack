@@ -131,7 +131,8 @@ export const LoginResponse = zod.object({
   "role": zod.enum(['admin', 'provider', 'patient', 'caregiver']),
   "active": zod.boolean(),
   "mustChangePassword": zod.boolean(),
-  "privacyConsentAccepted": zod.boolean()
+  "privacyConsentAccepted": zod.boolean(),
+  "phoneVerified": zod.boolean().optional()
 }),zod.null()])
 })
 
@@ -157,7 +158,8 @@ export const ChangePasswordResponse = zod.object({
   "role": zod.enum(['admin', 'provider', 'patient', 'caregiver']),
   "active": zod.boolean(),
   "mustChangePassword": zod.boolean(),
-  "privacyConsentAccepted": zod.boolean()
+  "privacyConsentAccepted": zod.boolean(),
+  "phoneVerified": zod.boolean().optional()
 })
 
 
@@ -199,7 +201,8 @@ export const VerifyLoginOtpResponse = zod.object({
   "role": zod.enum(['admin', 'provider', 'patient', 'caregiver']),
   "active": zod.boolean(),
   "mustChangePassword": zod.boolean(),
-  "privacyConsentAccepted": zod.boolean()
+  "privacyConsentAccepted": zod.boolean(),
+  "phoneVerified": zod.boolean().optional()
 })
 
 
@@ -213,7 +216,8 @@ export const GetCurrentUserResponse = zod.object({
   "role": zod.enum(['admin', 'provider', 'patient', 'caregiver']),
   "active": zod.boolean(),
   "mustChangePassword": zod.boolean(),
-  "privacyConsentAccepted": zod.boolean()
+  "privacyConsentAccepted": zod.boolean(),
+  "phoneVerified": zod.boolean().optional()
 })
 
 
@@ -249,7 +253,8 @@ export const ListUsersResponseItem = zod.object({
   "role": zod.enum(['admin', 'provider', 'patient', 'caregiver']),
   "active": zod.boolean(),
   "mustChangePassword": zod.boolean(),
-  "privacyConsentAccepted": zod.boolean()
+  "privacyConsentAccepted": zod.boolean(),
+  "phoneVerified": zod.boolean().optional()
 }).and(zod.object({
   "phone": zod.string().nullable(),
   "createdAt": zod.coerce.date()
@@ -282,7 +287,8 @@ export const CreateUserResponse = zod.object({
   "role": zod.enum(['admin', 'provider', 'patient', 'caregiver']),
   "active": zod.boolean(),
   "mustChangePassword": zod.boolean(),
-  "privacyConsentAccepted": zod.boolean()
+  "privacyConsentAccepted": zod.boolean(),
+  "phoneVerified": zod.boolean().optional()
 }).and(zod.object({
   "phone": zod.string().nullable(),
   "createdAt": zod.coerce.date()
@@ -318,7 +324,8 @@ export const UpdateUserResponse = zod.object({
   "role": zod.enum(['admin', 'provider', 'patient', 'caregiver']),
   "active": zod.boolean(),
   "mustChangePassword": zod.boolean(),
-  "privacyConsentAccepted": zod.boolean()
+  "privacyConsentAccepted": zod.boolean(),
+  "phoneVerified": zod.boolean().optional()
 }).and(zod.object({
   "phone": zod.string().nullable(),
   "createdAt": zod.coerce.date()

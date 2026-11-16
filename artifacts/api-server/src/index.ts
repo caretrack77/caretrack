@@ -2,7 +2,7 @@ import app from "./app";
 import { logger } from "./lib/logger";
 import { startBackgroundJobs } from "./lib/jobs";
 import { encryptLegacyMessages } from "./routes/messages";
-import { ensureIdempotencyStore } from "./lib/idempotency";
+import { ensureSchemaAdditions } from "./lib/idempotency";
 
 if (!process.env.SESSION_SECRET) {
   throw new Error("SESSION_SECRET must be set. Add a long random value to the .env file.");
@@ -21,6 +21,10 @@ if (Number.isNaN(port) || port <= 0) {
   throw new Error(`Invalid PORT value: "${rawPort}"`);
 }
 
+// Create any missing tables/columns before taking requests (they are selected by queries).
+// If the database is briefly unreachable, start anyway and let requests report the problem.
+await ensureSchemaAdditions().catch((err) => logger.error({ err }, "Could not prepare database additions"));
+
 app.listen(port, (err) => {
   if (err) {
     logger.error({ err }, "Error listening on port");
@@ -28,7 +32,6 @@ app.listen(port, (err) => {
   }
 
   logger.info({ port }, "Server listening");
-  ensureIdempotencyStore().catch((err) => logger.error({ err }, "Could not prepare the offline-sync duplicate guard table"));
   // Reminders, missed-dose marking, risk alerts and scheduled reports. Only one server per
   // database should run them: set BACKGROUND_JOBS=false on a laptop that shares the hosted
   // database, or reminders and alerts would be sent twice.
