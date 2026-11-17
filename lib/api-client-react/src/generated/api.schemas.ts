@@ -549,6 +549,52 @@ export interface MessageInput {
   body: string;
 }
 
+export interface CalendarMessage {
+  id: number;
+  patientId: number;
+  patientName: string;
+  /** @nullable */
+  senderId: number | null;
+  senderName: string;
+  senderRole: string;
+  body: string;
+  createdAt: string;
+}
+
+export type StaffThreadRole = typeof StaffThreadRole[keyof typeof StaffThreadRole];
+
+
+export const StaffThreadRole = {
+  admin: 'admin',
+  provider: 'provider',
+} as const;
+
+export interface StaffThread {
+  userId: number;
+  name: string;
+  role: StaffThreadRole;
+  /** @nullable */
+  lastMessage: string | null;
+  /** @nullable */
+  lastMessageAt: string | null;
+  lastFromMe: boolean;
+  unreadCount: number;
+}
+
+export interface StaffMessage {
+  id: number;
+  /** @nullable */
+  senderId: number | null;
+  senderName: string;
+  senderRole: string;
+  /** @nullable */
+  recipientId: number | null;
+  body: string;
+  /** @nullable */
+  readAt: string | null;
+  createdAt: string;
+}
+
 export interface PrivacyConsentInput {
   /** @minLength 1 */
   version: string;
@@ -1059,6 +1105,11 @@ patientId?: number;
 export type ListDosesParams = {
 date?: string;
 patientId?: number;
+};
+
+export type ListMessageCalendarParams = {
+from: string;
+to: string;
 };
 
 export type GetAnalyticsParams = {

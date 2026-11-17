@@ -5,7 +5,7 @@ import { Link, Redirect, Route, Switch, useLocation, useParams } from 'wouter';
 import {
   Activity, ArrowLeft, ArrowRight, BarChart3, Bell, CalendarDays, Check, Clock3, CircleHelp,
   ArrowLeftRight, ClipboardList, Download, Eye, EyeOff, FileText, KeyRound, UserPlus, HeartPulse, LayoutDashboard, LogOut, Mail, Menu, MessageSquare, Plus, Pill,
-  Search, Send, ShieldCheck, Sparkles, Stethoscope, Users, Wifi, WifiOff, X,
+  Search, Send, ShieldCheck, Sparkles, Stethoscope, Users, Wifi, WifiOff, X, MessagesSquare, ChevronLeft, ChevronRight,
 } from 'lucide-react';
 import {
   getGetAnalyticsQueryKey, getGetPatientQueryKey, getListAuditLogsQueryKey,
@@ -18,13 +18,15 @@ import {
   useListReportSchedules, useListReports, useListUsers, useLogin, useLogout, useMarkNotificationRead, useSimulateOverdueDoses,
   useUpdateDoseStatus, useUpdateMedication, useSendLoginOtp, useVerifyLoginOtp, useChangePassword, getGetCurrentUserQueryKey, useGetRiskModel, getGetRiskModelQueryKey, useTrainRiskModel, useListRiskPredictions, getListRiskPredictionsQueryKey, useGetPatientRisk, getGetPatientRiskQueryKey, useListLabResults, getListLabResultsQueryKey, useUploadLabResult, useReviewLabResult, useListAppointments, getListAppointmentsQueryKey, useCreateAppointment, useUpdateAppointment, useAskAssistant, useCreatePatientAccount, useGetDeliveryStatus, useSendDeliveryTest, useListCoverage, getListCoverageQueryKey, useCreateCoverage, useEndCoverage, useListProviders, useGetMedicationProgress, getGetMedicationProgressQueryKey, useListMessageThreads, getListMessageThreadsQueryKey, useListPatientMessages, getListPatientMessagesQueryKey, useSendPatientMessage, useMarkPatientMessagesRead,   useUpdatePatient, useUpdateReportSchedule, useUpdateUser, useListHealthMetrics, useCreateHealthMetric, useListHealthLogs, useCreateHealthLog, getListHealthMetricsQueryKey, getListHealthLogsQueryKey,
 } from '@workspace/api-client-react';
-import type { Analytics, Appointment, AuditLog, AuthUser, Coverage, LoginChallenge, OtpSendResult, Dose, Medication, Notification, Patient, Report, ReportSchedule, User, HealthMetric, HealthMetricInputMetricType, HealthLog } from '@workspace/api-client-react';
+import type { Analytics, Appointment, AuditLog, AuthUser, Coverage, LoginChallenge, OtpSendResult, Dose, Medication, Notification, Patient, Report, ReportSchedule, User, HealthMetric, HealthMetricInputMetricType, HealthLog, CalendarMessage, StaffMessage } from '@workspace/api-client-react';
+import { useListMessageCalendar, getListMessageCalendarQueryKey, useListStaffThreads, getListStaffThreadsQueryKey, useListStaffMessages, getListStaffMessagesQueryKey, useSendStaffMessage, useMarkStaffMessagesRead } from '@workspace/api-client-react';
 import { customFetch, OfflineError } from '@workspace/api-client-react';
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { builtInServerUrl, clearNativeSession, getServerUrl, isNativeApp, normalizeServerUrl, openProtectedFile, saveServerUrl, streamServerEvents, testServer } from './native';
 import { clearNativeNotifications, exactAlarmsAllowed, notificationPermission, openExactAlarmSettings, previewNativeWellness, requestNotificationPermission, syncNativeDoseReminders, syncNativeWellness } from './native-notifications';
 import { clearSavedData, discardChange, getSyncSnapshot, keepMine, onSyncComplete, retryAll, subscribeSync, syncErrorOf, syncStateOf, unsyncedCount, type SyncState } from './offline';
 import { clock12, dateTimeLabel, parseClockList, timeLabel } from './time-format';
+import { initials, shortName } from './names';
 import './index.css';
 
 // networkMode 'always': without it React Query pauses every query and save while the browser
@@ -45,7 +47,6 @@ const apiError = (err: unknown, fallback: string) => {
   const data = (err as { data?: { error?: unknown } } | null)?.data;
   return typeof data?.error === 'string' ? data.error : fallback;
 };
-const initials = (name = '') => name.split(' ').map((n) => n[0]).slice(0, 2).join('').toUpperCase();
 /** Landing page for each role: patients start on their doses, everyone else on the overview. */
 /** Removes cached pages and queued doses so the next person on this device sees nothing. */
 const clearOfflineData = () => {
@@ -69,6 +70,7 @@ const navItems = [
   { href: '/patients', label: 'Patients', icon: Users, roles: ['admin', 'provider', 'caregiver'] },
   { href: '/medications', label: 'Medications', icon: Pill, roles: ['admin', 'provider', 'caregiver'] },
   { href: '/messages', label: 'Messages', icon: MessageSquare, roles: ['admin', 'provider', 'patient', 'caregiver'] },
+  { href: '/team-messages', label: 'Team messages', icon: MessagesSquare, roles: ['admin', 'provider'] },
   { href: '/ai', label: 'AI risk prediction', icon: Sparkles, roles: ['admin', 'provider'] },
   { href: '/prescriptions', label: 'My prescriptions', icon: FileText, roles: ['patient', 'caregiver'] },
   { href: '/health', label: 'My health', icon: HeartPulse, roles: ['patient', 'caregiver'] },
@@ -199,7 +201,12 @@ function AuthenticatedApp() {
   // Protected APIs answer 403 until the password is changed and the privacy notice accepted.
   const ready = Boolean(user && !user.mustChangePassword && user.privacyConsentAccepted);
   const threads = useListMessageThreads({ query: { enabled: ready, queryKey: getListMessageThreadsQueryKey(), refetchInterval: 10_000 } });
-  const unreadMessages = (threads.data || []).reduce((n, t) => n + t.unreadCount, 0);
+  const unreadPatientMessages = (threads.data || []).reduce((n, t) => n + t.unreadCount, 0);
+  // Admin–doctor messages have their own unread count and menu badge.
+  const staffRole = user?.role === 'admin' || user?.role === 'provider';
+  const staffThreads = useListStaffThreads({ query: { enabled: ready && staffRole, queryKey: getListStaffThreadsQueryKey(), refetchInterval: 15_000 } });
+  const unreadStaff = (staffThreads.data || []).reduce((n, t) => n + t.unreadCount, 0);
+  const unreadFor = (href: string) => (href === '/messages' ? unreadPatientMessages : href === '/team-messages' ? unreadStaff : 0);
   useRealtimeEvents(ready);
   useWarmOfflineData(ready ? user : undefined);
   const logout = useLogout();
@@ -232,12 +239,12 @@ function AuthenticatedApp() {
       <div className="mx-3 mt-8 rounded-2xl border border-white/10 bg-white/[.06] p-3"><div className="flex items-center gap-3"><Avatar name={user.name}/><div className="min-w-0"><div className="truncate text-sm font-semibold" data-testid="text-user-name">{user.name}</div><div className="mt-0.5 text-xs capitalize text-white/55" data-testid="text-user-role">{roleName(user.role)} workspace</div></div></div></div>
       <div className="mb-3 mt-8 px-3 text-[10px] font-bold uppercase tracking-[.18em] text-white/40">Workspace</div>
       <nav aria-label="Main" className="sidebar-scroll -mx-2 min-h-0 flex-1 space-y-1 overflow-y-auto px-2 pb-2">
-        {navItems.filter(n=>n.roles.includes(user.role)).map(({href,label:navLabel,icon:Icon})=>{const label=href==='/messages'&&user.role==='patient'?'Message my doctor':navLabel;return <Link key={href} href={href} data-testid={`link-nav-${href.slice(1).replace('/','-')}`} className={`flex items-center gap-3 rounded-xl px-3 py-3 text-[13px] font-medium transition ${pathTitle===href?'bg-[#236275] text-white shadow-inner':'text-white/65 hover:bg-white/[.06] hover:text-white'}`}><Icon size={18} strokeWidth={1.8}/>{label}{href==='/today'&&<span className="ml-auto h-1.5 w-1.5 rounded-full bg-[#74d9c5]"/>}{href==='/messages'&&unreadMessages>0&&<span data-testid="status-unread-messages" className="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-[#74d9c5] px-1.5 text-[10px] font-bold text-[#123f4d]">{unreadMessages}</span>}</Link>})}
+        {navItems.filter(n=>n.roles.includes(user.role)).map(({href,label:navLabel,icon:Icon})=>{const label=href==='/messages'&&user.role==='patient'?'Message my doctor':navLabel;return <Link key={href} href={href} data-testid={`link-nav-${href.slice(1).replace('/','-')}`} aria-current={pathTitle===href||pathTitle.startsWith(`${href}/`)?'page':undefined} className={`flex items-center gap-3 rounded-xl px-3 py-3 text-[13px] font-medium transition ${pathTitle===href||pathTitle.startsWith(`${href}/`)?'bg-[#236275] text-white shadow-inner':'text-white/65 hover:bg-white/[.06] hover:text-white'}`}><Icon size={18} strokeWidth={1.8}/>{label}{href==='/today'&&<span className="ml-auto h-1.5 w-1.5 rounded-full bg-[#74d9c5]"/>}{unreadFor(href)>0&&<span data-testid={href==='/messages'?'status-unread-messages':'status-unread-team-messages'} className="ml-auto grid h-5 min-w-5 place-items-center rounded-full bg-[#74d9c5] px-1.5 text-[10px] font-bold text-[#123f4d]">{unreadFor(href)}</span>}</Link>})}
       </nav>
       <div className="mt-3 shrink-0 rounded-2xl border border-white/10 bg-[#103747] p-4"><div className="flex items-center gap-2 text-xs font-semibold text-[#86ded0]"><ShieldCheck size={15}/> Private demo space</div><p className="mt-2 text-[11px] leading-5 text-white/50">Only your assigned care team can see this information.</p></div>
       <button data-testid="button-logout" onClick={()=>signOut()} className="mt-4 flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-white/65 hover:bg-white/[.06] hover:text-white"><LogOut size={17}/> Sign out</button>
     </aside>
-    {mobileNav&&<div data-mobile-nav-open className="fixed inset-0 z-50 bg-[#102e39]/45 lg:hidden" onClick={()=>setMobileNav(false)}><div className="sidebar-scroll flex h-full w-[280px] flex-col overflow-y-auto bg-[#174353] p-5 text-white" onClick={e=>e.stopPropagation()}><div className="flex items-center justify-between"><Brand light/><button data-testid="button-close-navigation" aria-label="Close menu" onClick={()=>setMobileNav(false)} className="rounded-lg p-2"><X size={18}/></button></div><nav className="mt-8 space-y-1">{navItems.filter(n=>n.roles.includes(user.role)).map(({href,label,icon:Icon})=><Link key={href} href={href} onClick={()=>setMobileNav(false)} data-testid={`mobile-link-${href.slice(1).replace('/','-')}`} className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-white/75 hover:bg-white/10"><Icon size={18}/>{label}{href==='/messages'&&unreadMessages>0&&<span className="ml-auto rounded-full bg-[#74d9c5] px-1.5 text-[10px] font-bold text-[#123f4d]">{unreadMessages}</span>}</Link>)}</nav><button data-testid="button-logout-mobile" onClick={()=>signOut()} className="mt-8 flex items-center gap-3 px-3 py-3 text-sm text-white/70"><LogOut size={17}/>Sign out</button></div></div>}
+    {mobileNav&&<div data-mobile-nav-open className="fixed inset-0 z-50 bg-[#102e39]/45 lg:hidden" onClick={()=>setMobileNav(false)}><div className="sidebar-scroll flex h-full w-[280px] flex-col overflow-y-auto bg-[#174353] p-5 text-white" onClick={e=>e.stopPropagation()}><div className="flex items-center justify-between"><Brand light/><button data-testid="button-close-navigation" aria-label="Close menu" onClick={()=>setMobileNav(false)} className="rounded-lg p-2"><X size={18}/></button></div><nav className="mt-8 space-y-1">{navItems.filter(n=>n.roles.includes(user.role)).map(({href,label,icon:Icon})=><Link key={href} href={href} onClick={()=>setMobileNav(false)} data-testid={`mobile-link-${href.slice(1).replace('/','-')}`} className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-white/75 hover:bg-white/10"><Icon size={18}/>{label}{unreadFor(href)>0&&<span className="ml-auto rounded-full bg-[#74d9c5] px-1.5 text-[10px] font-bold text-[#123f4d]">{unreadFor(href)}</span>}</Link>)}</nav><button data-testid="button-logout-mobile" onClick={()=>signOut()} className="mt-8 flex items-center gap-3 px-3 py-3 text-sm text-white/70"><LogOut size={17}/>Sign out</button></div></div>}
     <div className="lg:pl-[252px]">
       <header className="app-header sticky top-0 z-30 flex h-[68px] items-center justify-between border-b border-[#dfebeb] bg-[#f7fbfb]/95 px-4 backdrop-blur sm:px-8">
         <button data-testid="button-open-navigation" aria-label="Open menu" onClick={()=>setMobileNav(true)} className="rounded-lg p-2 text-[#42616c] lg:hidden"><Menu size={21}/></button>
@@ -264,6 +271,7 @@ function AuthenticatedApp() {
           <Route path="/health"><RoleGate user={user} allowed={['patient','caregiver']}><MyHealthPage user={user}/></RoleGate></Route>
           <Route path="/appointments"><AppointmentsPage user={user}/></Route>
           <Route path="/messages"><MessagesPage user={user}/></Route>
+          <Route path="/team-messages"><RoleGate user={user} allowed={['admin','provider']}><TeamMessagesPage user={user}/></RoleGate></Route>
           <Route path="/analytics"><RoleGate user={user} allowed={['admin','provider']}><AnalyticsPage/></RoleGate></Route>
           <Route path="/reports"><RoleGate user={user} allowed={['admin','provider','caregiver']}><ReportsPage user={user}/></RoleGate></Route>
           <Route path="/admin/users"><RoleGate user={user} allowed={['admin']}><UsersPage user={user}/></RoleGate></Route>
@@ -285,6 +293,9 @@ function useRealtimeEvents(enabled: boolean) {
     try { data = raw ? JSON.parse(raw) : {}; } catch { /* non-message SSE keepalive */ }
     qc.invalidateQueries({ queryKey: getListMessageThreadsQueryKey() });
     qc.invalidateQueries({ queryKey: getListNotificationsQueryKey() });
+    // Admin–doctor messages and the Messages calendar refresh on the same events.
+    qc.invalidateQueries({ queryKey: getListStaffThreadsQueryKey() });
+    qc.invalidateQueries({ predicate: (q) => String(q.queryKey[0]).startsWith('/api/staff-messages/') || String(q.queryKey[0]).startsWith('/api/messages/calendar') });
     if (data.patientId) qc.invalidateQueries({ queryKey: getListPatientMessagesQueryKey(data.patientId) });
   };
   // Android app: EventSource can't send the session token, so the stream is read with fetch.
@@ -336,12 +347,13 @@ function NotificationBell({user,readOnly}:{user:AuthUser;readOnly:boolean}){
   // Close with Escape, and when the Android back button closes the menu.
   useEffect(()=>{if(!open)return;const key=(e:KeyboardEvent)=>{if(e.key==='Escape')setOpen(false)};const close=()=>setOpen(false);window.addEventListener('keydown',key);window.addEventListener('caretrack-close-nav',close);return()=>{window.removeEventListener('keydown',key);window.removeEventListener('caretrack-close-nav',close)}},[open]);
   const refresh=()=>qc.invalidateQueries({queryKey:getListNotificationsQueryKey()});
-  const read=(item:Notification)=>{if(item.kind==='reminder'||item.kind==='overdue'){setOpen(false);go('/today')}else if((item.kind==='ai-risk'||item.kind==='risk'||item.kind==='lab')&&item.patientId&&user.role!=='patient'&&user.role!=='caregiver'){setOpen(false);go(`/patients/${item.patientId}`)}else if(item.kind==='lab'){setOpen(false);go('/today')}else if(item.kind==='appointment'){setOpen(false);go('/appointments')}else if(item.kind==='prescription'){setOpen(false);go('/prescriptions')}else if(item.kind==='message'){setOpen(false);go(item.patientId?`/messages?patient=${item.patientId}`:'/messages')}if(item.read||readOnly)return;mark.mutate({id:item.id},{onSuccess:refresh})};
+  const read=(item:Notification)=>{if(item.kind==='reminder'||item.kind==='overdue'){setOpen(false);go('/today')}else if((item.kind==='ai-risk'||item.kind==='risk'||item.kind==='lab')&&item.patientId&&user.role!=='patient'&&user.role!=='caregiver'){setOpen(false);go(`/patients/${item.patientId}`)}else if(item.kind==='lab'){setOpen(false);go('/today')}else if(item.kind==='appointment'){setOpen(false);go('/appointments')}else if(item.kind==='prescription'){setOpen(false);go('/prescriptions')}else if(item.kind==='message'){setOpen(false);go(item.patientId?`/messages?patient=${item.patientId}`:'/messages')}else if(item.kind==='staff-message'){setOpen(false);go('/team-messages')}if(item.read||readOnly)return;mark.mutate({id:item.id},{onSuccess:refresh})};
   const markAll=()=>{const ids=notifications.filter(n=>!n.read).map(n=>n.id);void Promise.all(ids.map(id=>mark.mutateAsync({id}).catch(()=>null))).then(refresh)};
   const KIND:Record<string,{label:string;icon:typeof Bell;tone:string}>={
     reminder:{label:'Dose due',icon:Pill,tone:'bg-[#fbf1df] text-[#99702f]'},
     overdue:{label:'Missed dose',icon:Clock3,tone:'bg-[#fff0eb] text-[#ad5b45]'},
     message:{label:'Message',icon:MessageSquare,tone:'bg-[#e9f2f6] text-[#366a7d]'},
+    'staff-message':{label:'Team message',icon:MessagesSquare,tone:'bg-[#eef0fa] text-[#4a5a9a]'},
     appointment:{label:'Check-up',icon:CalendarDays,tone:'bg-[#e9f2f6] text-[#366a7d]'},
     prescription:{label:'Prescription',icon:FileText,tone:'bg-[#e5f5ee] text-[#28745a]'},
     lab:{label:'Lab result',icon:FileText,tone:'bg-[#e5f5ee] text-[#28745a]'},
@@ -380,7 +392,7 @@ function Dashboard({user}:{user:AuthUser}){
   const simulateNow=()=>simulate.mutate(undefined,{onSuccess:r=>{refreshDemo();setDemoFeedback(r.missedCount?`Simulated 2 hours passing: ${r.missedCount} overdue dose${r.missedCount===1?' was':'s were'} marked missed and alerts were sent.`:'No doses are currently due. Add a demo dose first, then simulate time.')},onError:()=>setDemoFeedback('Could not run the simulation.')});
   const loading=patients.isLoading||doses.isLoading;
   return <div className="page-enter">
-    <PageHeading eyebrow="Your care at a glance" title={`Good ${new Date().getHours()<12?'morning':new Date().getHours()<18?'afternoon':'evening'}, ${user.name.split(' ')[0]}`} description="Here’s how today is taking shape across your care team." action={canDemo?<div className="flex flex-wrap gap-2"><button data-testid="button-demo-dose" title="Creates a dose that is due right now" onClick={addDemo} disabled={createDemo.isPending||patientList.length===0} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#c8e2df] bg-white px-4 text-sm font-semibold text-[#247b79] transition hover:bg-[#eef9f6] disabled:opacity-50"><Plus size={16}/>{createDemo.isPending?'Adding dose…':'Mark a dose due now'}</button><button data-testid="button-simulate-time" title="Moves due doses past the 2-hour grace period" onClick={simulateNow} disabled={simulate.isPending} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#17647a] px-4 text-sm font-semibold text-white transition hover:bg-[#125366] disabled:opacity-50"><Clock3 size={16}/>{simulate.isPending?'Simulating…':'Simulate 2 hours'}</button></div>:undefined}/>
+    <PageHeading eyebrow="Your care at a glance" title={`Good ${new Date().getHours()<12?'morning':new Date().getHours()<18?'afternoon':'evening'}, ${shortName(user.name)}`} description="Here’s how today is taking shape across your care team." action={canDemo?<div className="flex flex-wrap gap-2"><button data-testid="button-demo-dose" title="Creates a dose that is due right now" onClick={addDemo} disabled={createDemo.isPending||patientList.length===0} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#c8e2df] bg-white px-4 text-sm font-semibold text-[#247b79] transition hover:bg-[#eef9f6] disabled:opacity-50"><Plus size={16}/>{createDemo.isPending?'Adding dose…':'Mark a dose due now'}</button><button data-testid="button-simulate-time" title="Moves due doses past the 2-hour grace period" onClick={simulateNow} disabled={simulate.isPending} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#17647a] px-4 text-sm font-semibold text-white transition hover:bg-[#125366] disabled:opacity-50"><Clock3 size={16}/>{simulate.isPending?'Simulating…':'Simulate 2 hours'}</button></div>:undefined}/>
     <CoverageBanner user={user}/>
     {demoFeedback&&<div data-testid="status-demo-feedback" role="status" className="mb-5 flex items-start justify-between gap-3 rounded-xl border border-[#cfe7df] bg-[#eef8f4] px-4 py-3 text-sm text-[#37796b]"><span>{demoFeedback}</span><button aria-label="Dismiss" onClick={()=>setDemoFeedback('')} className="text-[#5d8f86]"><X size={15}/></button></div>}
     {loading?<SkeletonGrid/>:patients.isError||doses.isError?<ErrorState retry={()=>{patients.refetch();doses.refetch()}}/>:<>
@@ -566,30 +578,134 @@ function SideEffectsPanel({patientId,patientFacing}:{patientId:number;patientFac
 }
 
 /** Doctor–patient messaging. Patients see their own thread; care team members pick a patient. */
+/** "YYYY-MM-DD" for a local date. */
+const isoDay=(d:Date)=>d.toLocaleDateString('en-CA');
+/**
+ * Month calendar. Days with activity show a count; today is outlined and the selected day
+ * is filled. Used by the Messages page.
+ */
+function MonthCalendar({month,selected,counts,onSelect,onMonth,loading=false}:{month:Date;selected:string;counts:Record<string,number>;onSelect:(day:string)=>void;onMonth:(m:Date)=>void;loading?:boolean}){
+  const first=new Date(month.getFullYear(),month.getMonth(),1);
+  const start=new Date(first);start.setDate(1-first.getDay());
+  const days=Array.from({length:42},(_,i)=>{const d=new Date(start);d.setDate(start.getDate()+i);return d});
+  const weeks=days[35].getMonth()!==month.getMonth()?days.slice(0,35):days;
+  const today=dateToday();
+  const shift=(n:number)=>onMonth(new Date(month.getFullYear(),month.getMonth()+n,1));
+  return <div data-testid="calendar-messages" className="p-4">
+    <div className="mb-3 flex items-center justify-between"><button type="button" aria-label="Previous month" onClick={()=>shift(-1)} className="grid h-9 w-9 place-items-center rounded-lg text-[#587680] hover:bg-[#f0f7f7]"><ChevronLeft size={18}/></button><div className="text-sm font-bold text-[#254954]" aria-live="polite">{month.toLocaleDateString('en-US',{month:'long',year:'numeric'})}{loading&&<span className="ml-2 text-[11px] font-normal text-[#8ba0a4]">loading…</span>}</div><button type="button" aria-label="Next month" onClick={()=>shift(1)} className="grid h-9 w-9 place-items-center rounded-lg text-[#587680] hover:bg-[#f0f7f7]"><ChevronRight size={18}/></button></div>
+    <div className="grid grid-cols-7 gap-1 text-center text-[10px] font-bold uppercase tracking-wider text-[#8ba0a4]">{['Sun','Mon','Tue','Wed','Thu','Fri','Sat'].map(d=><div key={d} className="py-1">{d}</div>)}</div>
+    <div className="grid grid-cols-7 gap-1" role="grid">{weeks.map(d=>{const key=isoDay(d),n=counts[key]||0,inMonth=d.getMonth()===month.getMonth(),isSel=key===selected,isToday=key===today;
+      return <button type="button" key={key} data-testid={`calendar-day-${key}`} onClick={()=>onSelect(key)} aria-pressed={isSel} aria-label={`${d.toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric'})}${n?`, ${n} message${n===1?'':'s'}`:', no messages'}`} className={`relative flex aspect-square min-h-10 flex-col items-center justify-center rounded-xl text-sm transition ${isSel?'bg-[#17647a] font-bold text-white':isToday?'border-2 border-[#9fcfc9] font-bold text-[#17647a]':inMonth?'text-[#31535e] hover:bg-[#f0f7f7]':'text-[#b8c6c8] hover:bg-[#f6f9f9]'}`}>{d.getDate()}{n>0&&<span className={`mt-0.5 min-w-[18px] rounded-full px-1 text-[9px] font-bold leading-4 ${isSel?'bg-white/25 text-white':'bg-[#e4f4f0] text-[#25867c]'}`}>{n}</span>}</button>})}</div>
+    <div className="mt-3 flex items-center justify-between text-[11px] text-[#8ba0a4]"><span>Numbers show messages that day</span><button type="button" onClick={()=>{onMonth(new Date(new Date().getFullYear(),new Date().getMonth(),1));onSelect(today)}} className="font-semibold text-[#287d80] hover:underline">Today</button></div>
+  </div>;
+}
+
+/** Doctor–patient messaging, organized by calendar: pick a day to see that day's messages; open a conversation to reply. */
 function MessagesPage({user}:{user:AuthUser}){
   const threads=useListMessageThreads({query:{queryKey:getListMessageThreadsQueryKey(),refetchInterval:5_000}});
   const initial=Number(new URLSearchParams(window.location.search).get('patient'))||0;
+  const isPatient=user.role==='patient';
   const [selected,setSelected]=useState(initial);
+  // Patients start in their conversation; the care team starts on today's messages.
+  const [view,setView]=useState<'day'|'thread'>(initial||isPatient?'thread':'day');
+  const [day,setDay]=useState(dateToday());
+  const [month,setMonth]=useState(()=>{const d=new Date();return new Date(d.getFullYear(),d.getMonth(),1)});
   const [search,setSearch]=useState('');
+  const range={from:isoDay(new Date(month.getFullYear(),month.getMonth(),1-new Date(month.getFullYear(),month.getMonth(),1).getDay())),to:isoDay(new Date(month.getFullYear(),month.getMonth()+1,13))};
+  const calendar=useListMessageCalendar(range,{query:{queryKey:getListMessageCalendarQueryKey(range),refetchInterval:30_000}});
+  const counts:Record<string,number>={};
+  for(const m of calendar.data||[]){const k=isoDay(new Date(m.createdAt));counts[k]=(counts[k]||0)+1}
   const list=(threads.data||[]).filter(t=>t.patientName.toLowerCase().includes(search.toLowerCase()));
-  const activeId=user.role==='patient'?(threads.data?.[0]?.patientId||0):selected;
+  const activeId=isPatient?(threads.data?.[0]?.patientId||0):selected;
   const active=(threads.data||[]).find(t=>t.patientId===activeId);
-  const showList=user.role!=='patient';
+  const open=(patientId:number)=>{setSelected(patientId);setView('thread')};
+  const pickDay=(d:string)=>{setDay(d);setView('day');const dt=new Date(`${d}T12:00:00`);if(dt.getMonth()!==month.getMonth()||dt.getFullYear()!==month.getFullYear())setMonth(new Date(dt.getFullYear(),dt.getMonth(),1))};
+  const dayMessages=(calendar.data||[]).filter(m=>isoDay(new Date(m.createdAt))===day&&m.patientName.toLowerCase().includes(isPatient?'':search.toLowerCase()));
+  const showThread=view==='thread'&&!!activeId&&!!active;
   return <div className="page-enter">
-    <PageHeading eyebrow="Care conversations" title="Messages" description={user.role==='patient'?'Message your care team about your medications and how you’re feeling.':user.role==='caregiver'?'Follow conversations between your linked patient and their care team.':'Secure conversations with the patients in your care.'}/>
-    <Card className="overflow-hidden"><div className={`grid ${showList?'lg:grid-cols-[320px_1fr]':''} min-h-[560px]`}>
-      {showList&&<div className={`border-[#eaf0f0] lg:border-r ${activeId?'hidden lg:block':''}`}>
-        <div className="border-b border-[#eaf0f0] p-4"><label className="flex h-10 items-center gap-2 rounded-xl border border-[#dce8e8] bg-[#fbfdfd] px-3"><Search size={15} className="text-[#81969b]"/><input data-testid="input-search-threads" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search patients…" className="w-full bg-transparent text-sm outline-none"/></label></div>
-        {threads.isLoading?<ListSkeleton/>:threads.isError?<ErrorState retry={()=>threads.refetch()}/>:list.length===0?<EmptyState title="No conversations" body="Patients in your care will appear here." icon={MessageSquare}/>:<div className="max-h-[520px] divide-y divide-[#edf2f2] overflow-y-auto">{list.map(t=><button key={t.patientId} data-testid={`thread-${t.patientId}`} onClick={()=>setSelected(t.patientId)} className={`flex w-full items-start gap-3 px-4 py-3 text-left transition hover:bg-[#f6faf9] ${activeId===t.patientId?'bg-[#eef8f6]':''}`}><Avatar name={t.patientName} small/><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><span className="truncate text-sm font-semibold text-[#31535e]">{t.patientName}</span>{t.lastMessageAt&&<span className="shrink-0 text-[10px] text-[#96a8ac]">{new Date(t.lastMessageAt).toLocaleDateString(undefined,{month:'short',day:'numeric'})}</span>}</div><div className="mt-0.5 flex items-center gap-2"><span className={`truncate text-xs ${t.unreadCount?'font-semibold text-[#31535e]':'text-[#81969b]'}`}>{t.lastMessage?`${t.lastSenderName?.split(' ')[0]}: ${t.lastMessage}`:'No messages yet'}</span>{t.unreadCount>0&&<span className="ml-auto grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-[#17647a] px-1.5 text-[10px] font-bold text-white">{t.unreadCount}</span>}</div></div></button>)}</div>}
-      </div>}
-      <div className={`flex flex-col ${showList&&!activeId?'hidden lg:flex':''}`}>
-        {activeId&&active?<Conversation key={activeId} user={user} patientId={activeId} patientName={active.patientName} onBack={showList?()=>setSelected(0):undefined}/>:threads.isLoading?<ListSkeleton/>:<div className="grid flex-1 place-items-center"><EmptyState title={user.role==='patient'?'Your care team inbox':'Select a conversation'} body={user.role==='patient'?'Your profile isn’t linked to a care team yet.':'Choose a patient on the left to view and send messages.'} icon={MessageSquare}/></div>}
+    <PageHeading eyebrow="Care conversations" title="Messages" description={isPatient?'Message your care team about your medications and how you’re feeling. Pick a day on the calendar to look back at past messages.':user.role==='caregiver'?'Follow conversations between your linked patient and their care team, day by day.':'Secure conversations with the patients in your care. Pick a day to see who wrote, or open a conversation to reply.'}/>
+    <div className="grid gap-5 lg:grid-cols-[340px_1fr]">
+      <div className={`space-y-5 ${showThread?'hidden lg:block':''}`}>
+        <Card><MonthCalendar month={month} selected={view==='day'?day:''} counts={counts} onSelect={pickDay} onMonth={setMonth} loading={calendar.isFetching&&!calendar.data}/></Card>
+        {!isPatient&&<Card className="overflow-hidden"><div className="border-b border-[#eaf0f0] p-4"><h2 className="mb-2 text-sm font-bold text-[#254954]">Conversations</h2><label className="flex h-10 items-center gap-2 rounded-xl border border-[#dce8e8] bg-[#fbfdfd] px-3"><Search size={15} className="text-[#81969b]"/><input data-testid="input-search-threads" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search patients…" className="w-full bg-transparent text-sm outline-none"/></label></div>
+          {threads.isLoading?<ListSkeleton/>:threads.isError?<ErrorState retry={()=>threads.refetch()}/>:list.length===0?<EmptyState title="No conversations" body="Patients in your care will appear here." icon={MessageSquare}/>:<div className="max-h-[360px] divide-y divide-[#edf2f2] overflow-y-auto">{list.map(t=><button key={t.patientId} data-testid={`thread-${t.patientId}`} onClick={()=>open(t.patientId)} className={`flex w-full items-start gap-3 px-4 py-3 text-left transition hover:bg-[#f6faf9] ${showThread&&activeId===t.patientId?'bg-[#eef8f6]':''}`}><Avatar name={t.patientName} small/><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><span className="truncate text-sm font-semibold text-[#31535e]">{t.patientName}</span>{t.lastMessageAt&&<span className="shrink-0 text-[10px] text-[#96a8ac]">{new Date(t.lastMessageAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</span>}</div><div className="mt-0.5 flex items-center gap-2"><span className={`truncate text-xs ${t.unreadCount?'font-semibold text-[#31535e]':'text-[#81969b]'}`}>{t.lastMessage?`${shortName(t.lastSenderName||'')}: ${t.lastMessage}`:'No messages yet'}</span>{t.unreadCount>0&&<span className="ml-auto grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-[#17647a] px-1.5 text-[10px] font-bold text-white">{t.unreadCount}</span>}</div></div></button>)}</div>}
+        </Card>}
       </div>
-    </div></Card>
+      <Card className="flex min-h-[520px] flex-col overflow-hidden">
+        {showThread?<Conversation key={activeId} user={user} patientId={activeId} patientName={active!.patientName} onBack={()=>setView('day')} backLabel="Back to calendar"/>
+          :<DayAgenda user={user} day={day} messages={dayMessages} loading={calendar.isLoading} error={calendar.isError} retry={()=>calendar.refetch()} onOpen={open} onBackToThread={isPatient&&active?()=>setView('thread'):undefined}/>}
+      </Card>
+    </div>
     <p className="mt-4 text-xs leading-5 text-[#859a9e]">For emergencies, call your local emergency number. Messages are not monitored around the clock.</p>
   </div>;
 }
-function Conversation({user,patientId,patientName,onBack}:{user:AuthUser;patientId:number;patientName:string;onBack?:()=>void}){
+
+/** One day's messages, grouped by patient conversation, with a button to open each conversation. */
+function DayAgenda({user,day,messages,loading,error,retry,onOpen,onBackToThread}:{user:AuthUser;day:string;messages:CalendarMessage[];loading:boolean;error:boolean;retry:()=>void;onOpen:(patientId:number)=>void;onBackToThread?:()=>void}){
+  const groups=new Map<number,CalendarMessage[]>();
+  for(const m of messages)groups.set(m.patientId,[...(groups.get(m.patientId)||[]),m]);
+  const label=new Date(`${day}T12:00:00`).toLocaleDateString('en-US',{weekday:'long',month:'long',day:'numeric',year:'numeric'});
+  return <>
+    <div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><div><div className="text-[10px] font-bold uppercase tracking-[.15em] text-[#458d89]">{day===dateToday()?'Today':'Selected day'}</div><h2 className="mt-0.5 font-bold text-[#254954]" data-testid="text-agenda-day">{label}</h2><p className="mt-0.5 text-xs text-[#81969b]">{messages.length?`${messages.length} message${messages.length===1?'':'s'} in ${groups.size} conversation${groups.size===1?'':'s'}`:'No messages on this day'}</p></div>{onBackToThread&&<button type="button" data-testid="button-back-conversation" onClick={onBackToThread} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#17647a] px-3 text-xs font-semibold text-white hover:bg-[#125366]"><MessageSquare size={14}/> Write a message</button>}</div>
+    <div className="flex-1 overflow-y-auto bg-[#f7fbfb] p-4 sm:p-5" data-testid="list-agenda">
+      {loading?<ListSkeleton/>:error?<ErrorState retry={retry}/>:groups.size===0?<EmptyState title="Nothing on this day" body={user.role==='patient'?'Choose another day, or write to your care team.':'Choose a day with a number on the calendar, or open a conversation on the left.'} icon={CalendarDays}/>:<div className="space-y-4">{[...groups.entries()].map(([pid,items])=><section key={pid} data-testid={`agenda-thread-${pid}`} className="overflow-hidden rounded-2xl border border-[#e3eded] bg-white">
+        <div className="flex items-center justify-between gap-3 border-b border-[#eef3f3] px-4 py-3"><div className="flex min-w-0 items-center gap-2.5"><Avatar name={items[0].patientName} small/><div className="min-w-0"><div className="truncate text-sm font-bold text-[#31535e]">{user.role==='patient'?'My care team':items[0].patientName}</div><div className="text-[11px] text-[#81969b]">{items.length} message{items.length===1?'':'s'}</div></div></div><button type="button" data-testid={`button-open-thread-${pid}`} onClick={()=>onOpen(pid)} className="inline-flex h-9 shrink-0 items-center gap-1 rounded-lg border border-[#c8e2df] px-3 text-xs font-semibold text-[#247b79] hover:bg-[#eef9f6]">{user.role==='caregiver'?'Open':'Open & reply'} <ArrowRight size={13}/></button></div>
+        <ol className="divide-y divide-[#f0f4f4]">{items.map(m=><li key={m.id} className="flex gap-3 px-4 py-2.5"><span className="w-16 shrink-0 pt-0.5 text-[11px] font-semibold text-[#6c858b]">{timeLabel(m.createdAt)}</span><div className="min-w-0 flex-1"><div className="text-xs font-bold text-[#31535e]">{m.senderId===user.id?'You':m.senderName} <span className="font-normal text-[#91a4a8]">· {m.senderRole==='provider'?'Doctor':roleLabel(m.senderRole)}</span></div><p className="mt-0.5 line-clamp-3 whitespace-pre-wrap break-words text-sm leading-5 text-[#47646c]">{m.body}</p></div></li>)}</ol>
+      </section>)}</div>}
+    </div>
+  </>;
+}
+// ---- Team messages: private admin–doctor conversations, separate from patient messaging ----
+const STAFF_TOPICS=['System','Patient','Medication','Clinic operations'] as const;
+/** A message may start with "[Topic] ": shown as a tag instead of text. */
+const splitTopic=(body:string)=>{const m=/^\[(System|Patient|Medication|Clinic operations)\]\s*/.exec(body);return m?{topic:m[1],text:body.slice(m[0].length)}:{topic:null,text:body}};
+function TeamMessagesPage({user}:{user:AuthUser}){
+  const threads=useListStaffThreads({query:{queryKey:getListStaffThreadsQueryKey(),refetchInterval:10_000}});
+  const initial=Number(new URLSearchParams(window.location.search).get('user'))||0;
+  const [selected,setSelected]=useState(initial),[search,setSearch]=useState('');
+  const others=user.role==='admin'?'doctors':'administrators';
+  const list=(threads.data||[]).filter(t=>t.name.toLowerCase().includes(search.toLowerCase()));
+  const active=(threads.data||[]).find(t=>t.userId===selected);
+  return <div className="page-enter">
+    <PageHeading eyebrow="Internal" title="Team messages" description={`Private conversations between administrators and doctors about system issues, patients, medications and clinic operations. Patients and caregivers can’t see these messages.`}/>
+    <Card className="overflow-hidden"><div className="grid min-h-[560px] lg:grid-cols-[320px_1fr]">
+      <div className={`border-[#eaf0f0] lg:border-r ${active?'hidden lg:block':''}`}>
+        <div className="border-b border-[#eaf0f0] p-4"><h2 className="mb-2 text-sm font-bold capitalize text-[#254954]">{others}</h2><label className="flex h-10 items-center gap-2 rounded-xl border border-[#dce8e8] bg-[#fbfdfd] px-3"><Search size={15} className="text-[#81969b]"/><input data-testid="input-search-staff" value={search} onChange={e=>setSearch(e.target.value)} placeholder={`Search ${others}…`} className="w-full bg-transparent text-sm outline-none"/></label></div>
+        {threads.isLoading?<ListSkeleton/>:threads.isError?<ErrorState retry={()=>threads.refetch()}/>:list.length===0?<EmptyState title={`No ${others} yet`} body={user.role==='admin'?'Add a doctor in Team access to start a conversation.':'No administrator accounts are active.'} icon={Users}/>:<div className="max-h-[520px] divide-y divide-[#edf2f2] overflow-y-auto">{list.map(t=><button key={t.userId} data-testid={`staff-thread-${t.userId}`} onClick={()=>setSelected(t.userId)} className={`flex w-full items-start gap-3 px-4 py-3 text-left transition hover:bg-[#f6faf9] ${selected===t.userId?'bg-[#eef8f6]':''}`}><Avatar name={t.name} small/><div className="min-w-0 flex-1"><div className="flex items-center justify-between gap-2"><span className="truncate text-sm font-semibold text-[#31535e]">{t.name}</span>{t.lastMessageAt&&<span className="shrink-0 text-[10px] text-[#96a8ac]">{new Date(t.lastMessageAt).toLocaleDateString('en-US',{month:'short',day:'numeric'})}</span>}</div><div className="text-[10px] font-bold uppercase tracking-wider text-[#8ba0a4]">{roleLabel(t.role)}</div><div className="mt-0.5 flex items-center gap-2"><span className={`truncate text-xs ${t.unreadCount?'font-semibold text-[#31535e]':'text-[#81969b]'}`}>{t.lastMessage?`${t.lastFromMe?'You: ':''}${splitTopic(t.lastMessage).text}`:'No messages yet'}</span>{t.unreadCount>0&&<span data-testid={`status-staff-unread-${t.userId}`} className="ml-auto grid h-5 min-w-5 shrink-0 place-items-center rounded-full bg-[#17647a] px-1.5 text-[10px] font-bold text-white">{t.unreadCount}</span>}</div></div></button>)}</div>}
+      </div>
+      <div className={`flex flex-col ${active?'':'hidden lg:flex'}`}>{active?<StaffConversation key={active.userId} user={user} other={active} onBack={()=>setSelected(0)}/>:<div className="grid flex-1 place-items-center"><EmptyState title="Select a colleague" body={`Choose one of the ${others} on the left to read or send messages.`} icon={MessagesSquare}/></div>}</div>
+    </div></Card>
+  </div>;
+}
+function StaffConversation({user,other,onBack}:{user:AuthUser;other:{userId:number;name:string;role:string};onBack:()=>void}){
+  const messages=useListStaffMessages(other.userId,{query:{queryKey:getListStaffMessagesQueryKey(other.userId),refetchInterval:4_000,refetchIntervalInBackground:false}});
+  const send=useSendStaffMessage(),markRead=useMarkStaffMessagesRead(),qc=useQueryClient();
+  const [text,setText]=useState(''),[topic,setTopic]=useState(''),[error,setError]=useState('');
+  const [pending,setPending]=useState<{key:number;body:string;failed:boolean}[]>([]);
+  const scroller=useRef<HTMLDivElement>(null);
+  const list=messages.data||[];
+  const lastId=list[list.length-1]?.id;
+  useEffect(()=>{markRead.mutate({userId:other.userId},{onSuccess:()=>qc.invalidateQueries({queryKey:getListStaffThreadsQueryKey()})})
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  },[other.userId,lastId]);
+  useEffect(()=>{const el=scroller.current;if(el)el.scrollTop=el.scrollHeight},[lastId,pending.length]);
+  const deliver=(key:number,body:string)=>send.mutate({userId:other.userId,data:{body}},{onSuccess:(msg)=>{qc.setQueryData(getListStaffMessagesQueryKey(other.userId),(old:StaffMessage[]|undefined)=>old?.some(m=>m.id===msg.id)?old:[...(old||[]),msg]);setPending(p=>p.filter(x=>x.key!==key));qc.invalidateQueries({queryKey:getListStaffThreadsQueryKey()})},onError:(err)=>{setPending(p=>p.map(x=>x.key===key?{...x,failed:true}:x));setError(apiError(err,'Message not sent. Tap it to retry.'))}});
+  const submit=(e:FormEvent)=>{e.preventDefault();const t=text.trim();if(!t)return;const body=(topic?`[${topic}] `:'')+t;setError('');const key=Date.now();setPending(p=>[...p,{key,body,failed:false}]);setText('');deliver(key,body)};
+  const lastMine=[...list].reverse().find(m=>m.senderId===user.id);
+  let lastDay='';
+  const bubble=(body:string)=>{const {topic:tag,text:t}=splitTopic(body);return <>{tag&&<span className="mb-1 inline-block rounded-full bg-black/10 px-2 py-0.5 text-[10px] font-bold uppercase tracking-wider">{tag}</span>}<div className="whitespace-pre-wrap break-words">{t}</div></>};
+  return <>
+    <div className="flex items-center gap-3 border-b border-[#eaf0f0] px-4 py-3 sm:px-5"><button data-testid="button-back-staff" onClick={onBack} aria-label="Back to colleagues" className="rounded-lg p-1.5 text-[#587680] hover:bg-[#f1f7f7] lg:hidden"><ArrowLeft size={18}/></button><Avatar name={other.name} small/><div className="min-w-0"><div className="truncate text-sm font-bold text-[#254954]" data-testid="text-staff-conversation-title">{other.name}</div><div className="text-[11px] text-[#81969b]">{roleLabel(other.role)} · internal, not visible to patients</div></div></div>
+    <div ref={scroller} className="flex-1 space-y-3 overflow-y-auto bg-[#f7fbfb] px-4 py-5 sm:px-6" style={{maxHeight:460,minHeight:320}} data-testid="list-staff-messages">
+      {messages.isLoading?<ListSkeleton/>:messages.isError?<ErrorState retry={()=>messages.refetch()}/>:list.length===0&&pending.length===0?<EmptyState title="No messages yet" body={`Start the conversation with ${shortName(other.name)} below.`} icon={MessagesSquare}/>:list.map(m=>{const mine=m.senderId===user.id;const d=new Date(m.createdAt).toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'});const showDay=d!==lastDay;lastDay=d;return <div key={m.id}>{showDay&&<div className="my-2 text-center text-[10px] font-semibold uppercase tracking-wider text-[#9aadb1]">{d}</div>}<div data-testid={`staff-message-${m.id}`} className={`flex ${mine?'justify-end':'justify-start'}`}><div className={`max-w-[80%] rounded-2xl px-3.5 py-2.5 text-sm leading-6 shadow-sm ${mine?'rounded-br-md bg-[#17647a] text-white':'rounded-bl-md border border-[#e3eded] bg-white text-[#31535e]'}`}>{!mine&&<div className="mb-0.5 text-[11px] font-bold text-[#2f8a84]">{m.senderName} <span className="font-normal text-[#91a4a8]">· {roleLabel(m.senderRole)}</span></div>}{bubble(m.body)}<div className={`mt-1 text-right text-[10px] ${mine?'text-white/60':'text-[#9aadb1]'}`}>{timeLabel(m.createdAt)}{mine&&m.id===lastMine?.id&&<span data-testid="status-staff-read"> · {m.readAt?'Read':'Sent'}</span>}</div></div></div></div>})}
+      {pending.map(p=><div key={p.key} className="flex justify-end"><button type="button" disabled={!p.failed} onClick={()=>{setError('');setPending(x=>x.map(y=>y.key===p.key?{...y,failed:false}:y));deliver(p.key,p.body)}} className={`max-w-[80%] rounded-2xl rounded-br-md px-3.5 py-2.5 text-left text-sm leading-6 shadow-sm ${p.failed?'border border-red-200 bg-red-50 text-red-800':'bg-[#17647a]/80 text-white'}`}>{bubble(p.body)}<div className={`mt-1 text-right text-[10px] ${p.failed?'text-red-600':'text-white/60'}`}>{p.failed?'Not sent · tap to retry':'Sending…'}</div></button></div>)}
+    </div>
+    <form onSubmit={submit} className="border-t border-[#eaf0f0] p-3 sm:p-4"><div className="mb-2 flex flex-wrap items-center gap-1.5" role="group" aria-label="Topic (optional)"><span className="text-[11px] font-semibold text-[#6c858b]">Topic:</span>{STAFF_TOPICS.map(t=><button type="button" key={t} aria-pressed={topic===t} onClick={()=>setTopic(topic===t?'':t)} className={`rounded-full border px-2.5 py-1 text-[11px] font-semibold ${topic===t?'border-[#17647a] bg-[#17647a] text-white':'border-[#dce8e8] text-[#55737a] hover:border-[#9fcfc9]'}`}>{t}</button>)}</div>
+      <div className="flex items-end gap-2"><textarea data-testid="input-staff-message" value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submit(e)}}} rows={1} maxLength={1980} placeholder={`Write to ${shortName(other.name)}…`} className="max-h-32 min-h-11 flex-1 resize-y rounded-xl border border-input bg-white px-3.5 py-2.5 text-sm outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"/><button data-testid="button-send-staff-message" disabled={!text.trim()} aria-label="Send message" className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#17647a] text-white transition hover:bg-[#125366] disabled:opacity-50"><Send size={18}/></button></div>{error&&<p role="alert" className="mt-2 text-xs text-red-700">{error}</p>}<p className="mt-1.5 text-[10px] text-[#9aadb1]">Press Enter to send, Shift+Enter for a new line. Encrypted and visible only to the two of you.</p></form>
+  </>;
+}
+
+function Conversation({user,patientId,patientName,onBack,backLabel='Back to conversations'}:{user:AuthUser;patientId:number;patientName:string;onBack?:()=>void;backLabel?:string}){
   // Refresh every 3 seconds while the conversation is open, so replies appear almost instantly.
   const messages=useListPatientMessages(patientId,{query:{queryKey:getListPatientMessagesQueryKey(patientId),refetchInterval:3_000,refetchIntervalInBackground:false}});
   const send=useSendPatientMessage(),markRead=useMarkPatientMessagesRead(),qc=useQueryClient();
@@ -612,12 +728,12 @@ function Conversation({user,patientId,patientName,onBack}:{user:AuthUser;patient
   const retry=(key:number,body:string)=>{setError('');setPending(p=>p.map(x=>x.key===key?{...x,failed:false}:x));deliver(key,body)};
   let lastDay='';
   return <>
-    <div className="flex items-center gap-3 border-b border-[#eaf0f0] px-4 py-3 sm:px-5">{onBack&&<button data-testid="button-back-threads" onClick={onBack} aria-label="Back to conversations" className="rounded-lg p-1.5 text-[#587680] hover:bg-[#f1f7f7] lg:hidden"><ArrowLeft size={18}/></button>}<Avatar name={user.role==='patient'?(doctorName||'Care Team'):patientName} small/><div className="min-w-0"><div className="truncate text-sm font-bold text-[#254954]" data-testid="text-conversation-title">{user.role==='patient'?(doctorName||'My care team'):patientName}</div><div className="flex items-center gap-1.5 text-[11px] text-[#81969b]"><span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#4bb19d] opacity-60"/><span className="relative inline-flex h-2 w-2 rounded-full bg-[#4bb19d]"/></span>{user.role==='patient'?(me?.coveringProviderName?`Covering for ${me.assignedProviderName} · live chat`:'Your doctor · live chat'):'Patient · live chat'}</div></div>{user.role!=='patient'&&<Link href={`/patients/${patientId}`} className="ml-auto rounded-lg border border-[#dce8e8] px-2.5 py-1.5 text-[11px] font-semibold text-[#397d7e] hover:bg-[#f3f9f8]">View profile</Link>}</div>
+    <div className="flex items-center gap-3 border-b border-[#eaf0f0] px-4 py-3 sm:px-5">{onBack&&<button data-testid="button-back-threads" onClick={onBack} aria-label={backLabel} title={backLabel} className="rounded-lg p-1.5 text-[#587680] hover:bg-[#f1f7f7]"><ArrowLeft size={18}/></button>}<Avatar name={user.role==='patient'?(doctorName||'Care Team'):patientName} small/><div className="min-w-0"><div className="truncate text-sm font-bold text-[#254954]" data-testid="text-conversation-title">{user.role==='patient'?(doctorName||'My care team'):patientName}</div><div className="flex items-center gap-1.5 text-[11px] text-[#81969b]"><span className="relative flex h-2 w-2"><span className="absolute inline-flex h-full w-full animate-ping rounded-full bg-[#4bb19d] opacity-60"/><span className="relative inline-flex h-2 w-2 rounded-full bg-[#4bb19d]"/></span>{user.role==='patient'?(me?.coveringProviderName?`Covering for ${me.assignedProviderName} · live chat`:'Your doctor · live chat'):'Patient · live chat'}</div></div>{user.role!=='patient'&&<Link href={`/patients/${patientId}`} className="ml-auto rounded-lg border border-[#dce8e8] px-2.5 py-1.5 text-[11px] font-semibold text-[#397d7e] hover:bg-[#f3f9f8]">View profile</Link>}</div>
     <div ref={scroller} className="flex-1 space-y-3 overflow-y-auto bg-[#f7fbfb] px-4 py-5 sm:px-6" style={{maxHeight:440,minHeight:320}} data-testid="list-messages">
       {messages.isLoading?<ListSkeleton/>:messages.isError?<ErrorState retry={()=>messages.refetch()}/>:list.length===0&&pending.length===0?<EmptyState title="No messages yet" body={canSend?'Start the conversation below.':'Messages between the patient and care team will appear here.'} icon={MessageSquare}/>:list.map(m=>{const mine=m.senderId===user.id;const day=new Date(m.createdAt).toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'});const showDay=day!==lastDay;lastDay=day;return <div key={m.id}>{showDay&&<div className="my-2 text-center text-[10px] font-semibold uppercase tracking-wider text-[#9aadb1]">{day}</div>}<div data-testid={`message-${m.id}`} className={`flex ${mine?'justify-end':'justify-start'}`}><div className={`max-w-[80%] rounded-2xl px-3.5 py-2.5 text-sm leading-6 shadow-sm ${mine?'rounded-br-md bg-[#17647a] text-white':'rounded-bl-md border border-[#e3eded] bg-white text-[#31535e]'}`}>{!mine&&<div className="mb-0.5 text-[11px] font-bold text-[#2f8a84]">{m.senderName} <span className="font-normal text-[#91a4a8]">· {m.senderRole==='provider'?'Doctor':roleLabel(m.senderRole)}</span></div>}<div className="whitespace-pre-wrap break-words">{m.body}</div><div className={`mt-1 text-right text-[10px] ${mine?'text-white/60':'text-[#9aadb1]'}`}>{timeLabel(m.createdAt)}{syncStateOf(m)&&<span data-testid="status-sync-record" data-sync={syncStateOf(m)}> · {syncStateOf(m)==='rejected'?`Not sent: ${syncErrorOf(m)||'refused by the server'}`:'Saved on this device · sends automatically'}</span>}</div></div></div></div>})}
       {pending.map(p=><div key={p.key} className="flex justify-end"><button type="button" disabled={!p.failed} onClick={()=>retry(p.key,p.body)} className={`max-w-[80%] rounded-2xl rounded-br-md px-3.5 py-2.5 text-left text-sm leading-6 shadow-sm ${p.failed?'border border-red-200 bg-red-50 text-red-800':'bg-[#17647a]/80 text-white'}`}><div className="whitespace-pre-wrap break-words">{p.body}</div><div className={`mt-1 text-right text-[10px] ${p.failed?'text-red-600':'text-white/60'}`}>{p.failed?'Not sent · tap to retry':'Sending…'}</div></button></div>)}
     </div>
-    {canSend?<form onSubmit={submit} className="border-t border-[#eaf0f0] p-3 sm:p-4"><div className="flex items-end gap-2"><textarea data-testid="input-message" value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submit(e)}}} rows={1} maxLength={2000} placeholder={user.role==='patient'?`Write to ${doctorName||'your doctor'}…`:`Write to ${patientName.split(' ')[0]}…`} className="max-h-32 min-h-11 flex-1 resize-y rounded-xl border border-input bg-white px-3.5 py-2.5 text-sm outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"/><button data-testid="button-send-message" disabled={!text.trim()} aria-label="Send message" className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#17647a] text-white transition hover:bg-[#125366] disabled:opacity-50"><Send size={18}/></button></div>{error&&<p role="alert" className="mt-2 text-xs text-red-700">{error}</p>}<p className="mt-1.5 text-[10px] text-[#9aadb1]">Press Enter to send, Shift+Enter for a new line.</p></form>:<div className="border-t border-[#eaf0f0] px-4 py-3 text-xs text-[#81969b]">Caregiver accounts can read this conversation but not send messages.</div>}
+    {canSend?<form onSubmit={submit} className="border-t border-[#eaf0f0] p-3 sm:p-4"><div className="flex items-end gap-2"><textarea data-testid="input-message" value={text} onChange={e=>setText(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey){e.preventDefault();submit(e)}}} rows={1} maxLength={2000} placeholder={user.role==='patient'?`Write to ${doctorName||'your doctor'}…`:`Write to ${shortName(patientName)}…`} className="max-h-32 min-h-11 flex-1 resize-y rounded-xl border border-input bg-white px-3.5 py-2.5 text-sm outline-none focus:border-primary focus:ring-4 focus:ring-primary/10"/><button data-testid="button-send-message" disabled={!text.trim()} aria-label="Send message" className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#17647a] text-white transition hover:bg-[#125366] disabled:opacity-50"><Send size={18}/></button></div>{error&&<p role="alert" className="mt-2 text-xs text-red-700">{error}</p>}<p className="mt-1.5 text-[10px] text-[#9aadb1]">Press Enter to send, Shift+Enter for a new line.</p></form>:<div className="border-t border-[#eaf0f0] px-4 py-3 text-xs text-[#81969b]">Caregiver accounts can read this conversation but not send messages.</div>}
   </>;
 }
 
@@ -653,7 +769,7 @@ function FirstLoginPasswordScreen({user,onSignOut}:{user:AuthUser;onSignOut:()=>
   return <div className="grid min-h-[100dvh] place-items-center bg-[#eef6f7] px-5 py-10"><div className="w-full max-w-[440px] page-enter">
     <div className="mb-6 flex justify-center"><Brand/></div>
     <div className="rounded-3xl border border-[#dce9e9] bg-white p-6 shadow-[0_20px_50px_rgba(31,74,88,.08)] sm:p-8">
-      <div className="mb-5 flex items-start gap-3"><div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#fbf1df] text-[#a77b36]"><KeyRound size={21}/></div><div><h1 className="text-lg font-bold text-[#173d4a]">Welcome, {user.name.split(' ')[0]}! Create your password</h1><p className="mt-1 text-xs leading-5 text-muted-foreground">Your account was set up with a temporary password. For security, choose a private password only you know before continuing.</p></div></div>
+      <div className="mb-5 flex items-start gap-3"><div className="grid h-11 w-11 shrink-0 place-items-center rounded-xl bg-[#fbf1df] text-[#a77b36]"><KeyRound size={21}/></div><div><h1 className="text-lg font-bold text-[#173d4a]">Welcome, {shortName(user.name)}! Create your password</h1><p className="mt-1 text-xs leading-5 text-muted-foreground">Your account was set up with a temporary password. For security, choose a private password only you know before continuing.</p></div></div>
       <ChangePasswordForm firstLogin/>
     </div>
     <button data-testid="button-first-login-signout" onClick={onSignOut} className="mx-auto mt-4 flex items-center gap-1.5 text-xs font-semibold text-[#47737b] hover:text-primary"><LogOut size={14}/> Sign out</button>
@@ -710,8 +826,8 @@ function HelpDialog({user,onClose}:{user:AuthUser;onClose:()=>void}){
   const tips:Record<string,[string,string,string][]>={
     patient:[['/today','Today’s doses','When a dose is due you hear a chime and see a reminder. Tap “I’ve taken it”, “I took it late” or “Missed”.'],['/prescriptions','My prescriptions','Your medicines, how to take them, side effects to watch for, and files from your doctor.'],['/health','My health','Record blood pressure, sugar and how you feel. Works without internet.'],['/messages','Message my doctor','Ask your care team a question.']],
     caregiver:[['/today','Today’s doses','See your patient’s doses and reminders. Only the patient marks doses as taken.'],['/prescriptions','Prescriptions','Medicines, side effects to watch for, and prescription files.'],['/messages','Messages','Read the conversation between your patient and their doctor.']],
-    provider:[['/patients','Patients','Open a patient to see adherence, upload prescriptions and lab results, and add side effects to medications.'],['/medications','Medications','Create schedules (times in 12-hour form, e.g. 8:00 AM) and record side effects.'],['/today','Today’s doses','View-only: patients log their own doses.'],['/ai','AI risk prediction','Which patients may need extra support this week.']],
-    admin:[['/admin/users','Team access','Add doctors, patients and caregivers.'],['/patients','Patients','Patient profiles and care records.'],['/admin/audit','Audit activity','Who changed what, and when.']],
+    provider:[['/patients','Patients','Open a patient: tabs group their overview, personal details, medication schedule and history, adherence and reports.'],['/team-messages','Team messages','Private messages with administrators about the system, patients, medications or clinic operations.'],['/medications','Medications','A table of every schedule. Click a patient’s name to open their profile. Times use 12-hour form, e.g. 8:00 AM.'],['/today','Today’s doses','View-only: patients log their own doses.'],['/ai','AI risk prediction','Which patients may need extra support this week.']],
+    admin:[['/admin/users','Team access','Add doctors, patients and caregivers.'],['/team-messages','Team messages','Private messages with doctors about the system, patients, medications or clinic operations.'],['/patients','Patients','Patient profiles and care records.'],['/admin/audit','Audit activity','Who changed what, and when.']],
   };
   const test=()=>setTested(playChime({force:true})?'If you heard a chime, sound is working. If not, check your phone’s volume and silent mode.':'This device can’t play sounds from the browser.');
   return <Modal title="Help" subtitle={`Quick guide for your ${roleLabel(user.role).toLowerCase()} account`} onClose={onClose}>
@@ -802,7 +918,7 @@ function PatientLoginCard({patient}:{patient:Patient}){
       {error&&<div role="alert" className="text-xs text-red-700">{error}</div>}
       <div className="flex justify-end gap-2"><button type="button" onClick={()=>setOpen(false)} className="h-9 rounded-lg px-3 text-xs font-semibold text-[#6b8389] hover:bg-[#f3f7f7]">Cancel</button><button data-testid="button-save-patient-login" disabled={create.isPending} className="h-9 rounded-lg bg-[#17647a] px-3 text-xs font-semibold text-white hover:bg-[#125366] disabled:opacity-60">{create.isPending?'Creating…':'Create login'}</button></div>
     </form>}
-    {done&&<div className="mt-4 space-y-2" data-testid="panel-patient-login-created"><div className="rounded-xl border border-[#cfe7df] bg-[#eef8f4] p-3 text-xs text-[#37796b]"><div className="font-semibold">Login created. Give these details to {patient.name.split(' ')[0]}:</div><div className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1"><span>Email</span><span className="font-mono">{done.email}</span><span>Temporary password</span><span className="font-mono font-bold">{done.password}</span></div></div><p className="text-[11px] leading-5 text-[#8ba0a4]">They sign in, enter the code sent to their Gmail or phone, then create their own password.</p><button type="button" onClick={()=>navigator.clipboard?.writeText(`CareTrack login\nEmail: ${done.email}\nTemporary password: ${done.password}`)} className="h-9 rounded-lg border border-[#dce8e8] px-3 text-xs font-semibold text-[#52737c] hover:bg-[#f5f9f9]">Copy details</button></div>}
+    {done&&<div className="mt-4 space-y-2" data-testid="panel-patient-login-created"><div className="rounded-xl border border-[#cfe7df] bg-[#eef8f4] p-3 text-xs text-[#37796b]"><div className="font-semibold">Login created. Give these details to {shortName(patient.name)}:</div><div className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1"><span>Email</span><span className="font-mono">{done.email}</span><span>Temporary password</span><span className="font-mono font-bold">{done.password}</span></div></div><p className="text-[11px] leading-5 text-[#8ba0a4]">They sign in, enter the code sent to their Gmail or phone, then create their own password.</p><button type="button" onClick={()=>navigator.clipboard?.writeText(`CareTrack login\nEmail: ${done.email}\nTemporary password: ${done.password}`)} className="h-9 rounded-lg border border-[#dce8e8] px-3 text-xs font-semibold text-[#52737c] hover:bg-[#f5f9f9]">Copy details</button></div>}
   </Card>;
 }
 
@@ -857,7 +973,7 @@ const readAlerted=(userId:number):string[]=>{try{const v=JSON.parse(localStorage
 const markAlerted=(userId:number,keys:string[])=>{if(!keys.length)return;try{localStorage.setItem(`${ALERTED_KEY}-${userId}`,JSON.stringify([...readAlerted(userId),...keys].slice(-300)))}catch{/* storage unavailable */}};
 /** Android app with notifications allowed: the phone's own dose alarm makes the sound. */
 let nativeDoseAlarms=false;
-const ALERT_KINDS=['reminder','overdue','message','ai-risk','appointment','risk','lab','prescription'];
+const ALERT_KINDS=['reminder','overdue','message','staff-message','ai-risk','appointment','risk','lab','prescription'];
 const FRESH_MS=10*60_000;
 /** Plays a sound and shows a system notification when new important notifications arrive. */
 function useNotificationAlerts(notifications:Notification[],user:AuthUser){
@@ -1326,27 +1442,130 @@ function PatientModal({patient,onClose}:{patient:Patient|null;onClose:()=>void})
   </form></Modal>;
 }
 
+// ---- Patient profile: grouped into tabs so nothing important sits at the bottom of a long page ----
+const PATIENT_TABS=[
+  {id:'overview',label:'Overview'},
+  {id:'personal',label:'Personal information'},
+  {id:'schedule',label:'Medication schedule'},
+  {id:'history',label:'Medication history'},
+  {id:'adherence',label:'Adherence records'},
+  {id:'reports',label:'Reports & results'},
+] as const;
+type PatientTab=typeof PATIENT_TABS[number]['id'];
+type PatientWithRecords=Patient&{medications:Medication[];recentDoses:Dose[]};
+const isCurrentMed=(m:Medication)=>m.active&&(!m.endDate||m.endDate>=dateToday());
+
 function PatientDetailPage({user}:{user:AuthUser}){
   const params=useParams<{id:string}>(), id=Number(params.id)||0;
   const query=useGetPatient(id,{query:{enabled:!!id,queryKey:getGetPatientQueryKey(id)}});
-  const patient=query.data as (Patient & {medications:Medication[];recentDoses:Dose[]})|undefined;
+  const patient=query.data as PatientWithRecords|undefined;
   const [edit,setEdit]=useState(false);
+  // The open tab is kept in the address (?tab=schedule), so links and the back button work.
+  const fromUrl=()=>{const t=new URLSearchParams(window.location.search).get('tab');return (PATIENT_TABS.some(x=>x.id===t)?t:'overview') as PatientTab};
+  const [tab,setTabState]=useState<PatientTab>(fromUrl);
+  useEffect(()=>{const onPop=()=>setTabState(fromUrl());window.addEventListener('popstate',onPop);return()=>window.removeEventListener('popstate',onPop)},[]);
+  const setTab=(t:PatientTab)=>{setTabState(t);const url=new URL(window.location.href);if(t==='overview')url.searchParams.delete('tab');else url.searchParams.set('tab',t);window.history.replaceState(window.history.state,'',`${url.pathname}${url.search}`)};
+  const canManage=user.role==='admin'||user.role==='provider';
   if(query.isLoading)return <DetailSkeleton/>;
   if(query.isError||!patient)return <div><Link href="/patients" data-testid="link-back-patients" className="mb-5 inline-flex items-center gap-2 text-sm text-[#47737b]"><ArrowLeft size={16}/> Patients</Link><Card><ErrorState retry={()=>query.refetch()}/></Card></div>;
-  return <div className="page-enter"><Link href="/patients" data-testid="link-back-patients" className="mb-5 inline-flex items-center gap-2 text-sm font-semibold text-[#47737b] hover:text-primary"><ArrowLeft size={16}/> Patient directory</Link>
-    <div className="mb-6 flex flex-col gap-4 rounded-3xl bg-[#174b5b] p-5 text-white sm:flex-row sm:items-center sm:justify-between sm:p-7"><div className="flex items-center gap-4"><div className="grid h-14 w-14 place-items-center rounded-2xl bg-white/10 text-lg font-bold">{initials(patient.name)}</div><div><div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-extrabold tracking-tight" data-testid="text-patient-detail-name">{patient.name}</h1><span className="rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#a6e5d9]">{patient.active?'Active':'Inactive'}</span></div><p className="mt-1 text-sm text-white/60">{patient.age} years · {patient.sex.replace('_',' ')}{patient.phone?` · ${patient.phone}`:''}</p></div></div><div className="flex flex-wrap gap-2"><Link href={`/messages?patient=${patient.id}`} data-testid="button-message-patient" className="inline-flex h-10 items-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-[#174b5b] hover:bg-[#e8f4f2]"><MessageSquare size={16}/> Messages</Link>{(user.role==='admin'||user.role==='provider')&&<button data-testid="button-edit-patient-detail" onClick={()=>setEdit(true)} className="h-10 rounded-xl border border-white/20 px-4 text-sm font-semibold hover:bg-white/10">Edit profile</button>}</div></div>
-    <div className="mb-5"><AiRiskCard patientId={patient.id}/></div>
-    <div className="mb-5"><HealthMetricsPanel patientId={patient.id} canRecord={user.role==='admin'||user.role==='provider'||user.role==='patient'||user.role==='caregiver'}/></div>
-    <div className="mb-5"><MedicationProgressPanel patientId={patient.id} canAdd={user.role==='admin'||user.role==='provider'}/></div>
-    <div className="mb-5 grid gap-5 xl:grid-cols-[1.1fr_.9fr]"><DigitalPrescription patientId={patient.id}/><LabResultsPanel patientId={patient.id} category="prescription" canUpload={user.role==='admin'||user.role==='provider'} canReview={false}/></div>
-    <div className="mb-5 grid gap-5 xl:grid-cols-2"><LabResultsPanel patientId={patient.id} canUpload={user.role==='admin'||user.role==='provider'} canReview={user.role==='admin'||user.role==='provider'}/><AppointmentsPanel user={user} patientId={patient.id}/></div>
-    <div className="mb-5"><PatientInsightPanel patient={patient} patientFacing={false} canGenerate={user.role==='admin'||user.role==='provider'}/></div>
-    <div className="grid gap-5 xl:grid-cols-[.85fr_1.15fr]">
-      <div className="space-y-5">{(user.role==='admin'||user.role==='provider')&&<PatientLoginCard key={patient.id} patient={patient}/>}<Card className="p-5"><h2 className="font-bold text-[#254954]">Care overview</h2><div className="mt-4 grid grid-cols-2 gap-3"><Info label="Doctor" value={`${patient.assignedProviderName||'Not assigned'}${patient.coveringProviderName?` (away, covered by ${patient.coveringProviderName})`:''}`}/><Info label="Profile status" value={patient.active?'Active':'Inactive'}/><Info label="Phone" value={patient.phone||'Not provided'}/><Info label="Email" value={patient.email||'Not provided'}/></div><div className="mt-5 border-t border-[#edf2f2] pt-4"><Info label="Conditions" value={patient.conditions?.join(', ')||'None listed'}/><div className="mt-4"><Info label="Allergies" value={patient.allergies?.join(', ')||'None listed'}/></div>{patient.notes&&<div className="mt-4"><Info label="Care notes" value={patient.notes}/></div>}</div></Card>
-        <Card className="p-5"><h2 className="font-bold text-[#254954]">Medication schedule</h2><div className="mt-4 space-y-3">{patient.medications?.filter(m=>m.active).length?patient.medications.filter(m=>m.active).map(m=><MedicationMini key={m.id} med={m}/>):<EmptyState title="No active medications" body="Active medication schedules will appear here." icon={Pill}/>}</div></Card></div>
-      <Card><div className="border-b border-[#eaf0f0] px-5 py-4"><h2 className="font-bold text-[#254954]">Recent doses</h2><p className="mt-1 text-xs text-[#81969b]">Recent activity from this patient’s schedule</p></div>{patient.recentDoses?.length?<div className="divide-y divide-[#edf2f2]">{patient.recentDoses.slice(0,10).map(d=><div key={d.id} data-testid={`row-patient-dose-${d.id}`} className="flex items-center gap-3 px-5 py-4"><div className={`grid h-9 w-9 place-items-center rounded-xl ${d.status==='taken'?'bg-[#e7f5ef] text-[#35896c]':'bg-[#eaf3f5] text-[#4a8494]'}`}><Pill size={16}/></div><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-[#31535e]">{d.medicationName}</div><div className="mt-1 text-xs text-[#81969b]">{timeLabel(d.scheduledTime)} · {d.dosage}</div></div><StatusPill status={d.status}/></div>)}</div>:<EmptyState title="No dose history yet" body="Logged doses will show here as this schedule gets underway."/>}</Card>
-    </div>{edit&&<PatientModal patient={patient} onClose={()=>setEdit(false)}/>}
+  const current=(patient.medications||[]).filter(isCurrentMed);
+  const chip='rounded-full bg-white/10 px-2.5 py-1 text-[11px] font-semibold';
+  return <div className="page-enter"><Link href="/patients" data-testid="link-back-patients" className="mb-4 inline-flex items-center gap-2 text-sm font-semibold text-[#47737b] hover:text-primary"><ArrowLeft size={16}/> Patient directory</Link>
+    {/* Header: who this is, plus the facts needed on every tab (doctor, conditions, allergies). */}
+    <div className="mb-4 rounded-3xl bg-[#174b5b] p-5 text-white sm:p-6">
+      <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between"><div className="flex items-center gap-4"><div className="grid h-14 w-14 shrink-0 place-items-center rounded-2xl bg-white/10 text-lg font-bold">{initials(patient.name)}</div><div className="min-w-0"><div className="flex flex-wrap items-center gap-2"><h1 className="text-2xl font-extrabold tracking-tight" data-testid="text-patient-detail-name">{patient.name}</h1><span className="rounded-full bg-white/10 px-2.5 py-1 text-[10px] font-semibold uppercase tracking-wider text-[#a6e5d9]">{patient.active?'Active':'Inactive'}</span></div><p className="mt-1 text-sm text-white/65">{patient.age} years · {patient.sex.replace('_',' ')}{patient.phone?` · ${patient.phone}`:''}</p></div></div>
+        <div className="flex flex-wrap gap-2"><Link href={`/messages?patient=${patient.id}`} data-testid="button-message-patient" className="inline-flex h-10 items-center gap-2 rounded-xl bg-white px-4 text-sm font-semibold text-[#174b5b] hover:bg-[#e8f4f2]"><MessageSquare size={16}/> Messages</Link>{canManage&&<button data-testid="button-edit-patient-detail" onClick={()=>setEdit(true)} className="h-10 rounded-xl border border-white/20 px-4 text-sm font-semibold hover:bg-white/10">Edit profile</button>}</div></div>
+      <div className="mt-4 flex flex-wrap gap-2 border-t border-white/10 pt-4 text-white/85"><span className={chip}><Stethoscope size={12} className="mr-1 inline"/>{patient.assignedProviderName||'No doctor assigned'}{patient.coveringProviderName?` · covered by ${patient.coveringProviderName}`:''}</span><span className={chip}>Conditions: {patient.conditions?.join(', ')||'None listed'}</span><span data-testid="text-patient-allergies" className={`${chip} ${patient.allergies?.length?'bg-[#f6c9bd]/25 text-[#ffe3db]':''}`}>Allergies: {patient.allergies?.join(', ')||'None recorded'}</span><span className={chip}><Pill size={12} className="mr-1 inline"/>{current.length} active medication{current.length===1?'':'s'}</span></div>
+    </div>
+    {/* Tabs: scroll sideways on small screens instead of wrapping into several rows. */}
+    <div role="tablist" aria-label="Patient profile sections" className="sidebar-scroll -mx-4 mb-5 flex gap-1 overflow-x-auto border-b border-[#dfebeb] px-4 sm:mx-0 sm:px-0">{PATIENT_TABS.map(t=><button key={t.id} role="tab" id={`tab-${t.id}`} aria-selected={tab===t.id} aria-controls={`panel-${t.id}`} data-testid={`tab-patient-${t.id}`} onClick={()=>setTab(t.id)} className={`-mb-px shrink-0 whitespace-nowrap border-b-2 px-3.5 py-3 text-sm font-semibold transition ${tab===t.id?'border-[#17647a] text-[#17647a]':'border-transparent text-[#6c858b] hover:text-[#31535e]'}`}>{t.label}{t.id==='schedule'&&current.length>0&&<span className="ml-1.5 rounded-full bg-[#e4f4f0] px-1.5 py-0.5 text-[10px] font-bold text-[#25867c]">{current.length}</span>}</button>)}</div>
+    <div role="tabpanel" id={`panel-${tab}`} aria-labelledby={`tab-${tab}`} data-testid={`panel-patient-${tab}`}>
+      {tab==='overview'&&<PatientOverviewTab user={user} patient={patient} onOpen={setTab}/>}
+      {tab==='personal'&&<div className="grid gap-5 xl:grid-cols-[.9fr_1.1fr]"><div className="space-y-5"><PatientPersonalCard patient={patient}/>{canManage&&<PatientLoginCard key={patient.id} patient={patient}/>}</div><HealthMetricsPanel patientId={patient.id} canRecord={user.role==='admin'||user.role==='provider'||user.role==='patient'||user.role==='caregiver'}/></div>}
+      {tab==='schedule'&&<PatientScheduleTab user={user} patient={patient}/>}
+      {tab==='history'&&<PatientHistoryTab patient={patient}/>}
+      {tab==='adherence'&&<div className="space-y-5"><PatientAdherenceStats patientId={patient.id}/><MedicationProgressPanel patientId={patient.id} canAdd={canManage}/><PatientInsightPanel patient={patient} patientFacing={false} canGenerate={canManage}/></div>}
+      {tab==='reports'&&<div className="grid gap-5 xl:grid-cols-2"><PatientReportsCard user={user} patient={patient}/><LabResultsPanel patientId={patient.id} canUpload={canManage} canReview={canManage}/></div>}
+    </div>
+    {edit&&<PatientModal patient={patient} onClose={()=>setEdit(false)}/>}
   </div>;
+}
+
+/** Overview: the numbers and today's plan at a glance, with the medication schedule near the top. */
+function PatientOverviewTab({user,patient,onOpen}:{user:AuthUser;patient:PatientWithRecords;onOpen:(t:PatientTab)=>void}){
+  const params={date:dateToday(),patientId:patient.id};
+  const doses=useListDoses(params,{query:{queryKey:getListDosesQueryKey(params)}});
+  const range={from:daysAgo(29),to:dateToday(),patientId:patient.id};
+  const analytics=useGetAnalytics(range,{query:{queryKey:getGetAnalyticsQueryKey(range)}});
+  const appts=useListAppointments();
+  const today=doses.data||[], taken=today.filter(d=>d.status==='taken').length;
+  const rate=(analytics.data as Analytics|undefined)?.adherenceRate;
+  const next=(appts.data||[]).filter(a=>a.patientId===patient.id&&a.status==='scheduled'&&new Date(a.scheduledAt).getTime()>Date.now()).sort((a,b)=>a.scheduledAt.localeCompare(b.scheduledAt))[0];
+  const current=(patient.medications||[]).filter(isCurrentMed);
+  const tile='rounded-2xl border border-[#e0ebeb] bg-white p-4 care-shadow';
+  return <div className="space-y-5">
+    <div className="grid grid-cols-2 gap-3 lg:grid-cols-4">
+      <button type="button" onClick={()=>onOpen('adherence')} className={`${tile} text-left transition hover:border-[#9fcfc9]`}><div className="text-xs font-semibold text-[#789098]">30-day adherence</div><div className="mt-2 text-2xl font-extrabold text-[#214754]">{rate===undefined?'—':`${Math.round(rate)}%`}</div>{rate!==undefined&&<div className="mt-2 h-1.5 overflow-hidden rounded-full bg-[#edf3f2]"><div className="h-full rounded-full" style={{width:`${rate}%`,background:riskColor(rate)}}/></div>}</button>
+      <button type="button" onClick={()=>onOpen('schedule')} className={`${tile} text-left transition hover:border-[#9fcfc9]`}><div className="text-xs font-semibold text-[#789098]">Active medications</div><div className="mt-2 text-2xl font-extrabold text-[#214754]">{current.length}</div><div className="mt-1 text-[11px] text-[#7d9297]">View schedule →</div></button>
+      <div className={tile}><div className="text-xs font-semibold text-[#789098]">Today’s doses</div><div className="mt-2 text-2xl font-extrabold text-[#214754]">{doses.isLoading?'…':`${taken} / ${today.length}`}</div><div className="mt-1 text-[11px] text-[#7d9297]">taken so far</div></div>
+      <div className={tile}><div className="text-xs font-semibold text-[#789098]">Next check-up</div><div className="mt-2 text-sm font-bold leading-5 text-[#214754]">{next?dateTimeLabel(next.scheduledAt,{weekday:'short',month:'short',day:'numeric'}):'None scheduled'}</div>{next&&<div className="mt-1 truncate text-[11px] text-[#7d9297]">{next.reason}</div>}</div>
+    </div>
+    <div className="grid gap-5 xl:grid-cols-[1.1fr_.9fr]">
+      <Card><div className="flex items-center justify-between border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><div><h2 className="font-bold text-[#254954]">Today’s doses</h2><p className="mt-1 text-xs text-[#81969b]">View only. The patient logs each dose.</p></div></div>{doses.isLoading?<ListSkeleton/>:doses.isError?<ErrorState retry={()=>doses.refetch()}/>:today.length===0?<EmptyState title="No doses today" body="Active schedules will show today’s doses here."/>:<div className="divide-y divide-[#edf2f2]">{today.map(d=><DoseRow key={d.id} dose={d} compact readOnly role={user.role}/>)}</div>}</Card>
+      <AiRiskCard patientId={patient.id}/>
+    </div>
+    <Card><div className="flex items-center justify-between gap-3 border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><div><h2 className="font-bold text-[#254954]">Medication schedule</h2><p className="mt-1 text-xs text-[#81969b]">Current medicines, doses and times</p></div><button type="button" data-testid="button-open-schedule-tab" onClick={()=>onOpen('schedule')} className="inline-flex items-center gap-1 text-xs font-semibold text-[#287f83] hover:underline">Full schedule <ArrowRight size={14}/></button></div>{current.length?<MedicationTable meds={current} patientName={()=>patient.name} editable={false} onEdit={()=>undefined} showPatient={false}/>:<EmptyState title="No active medications" body="Active medication schedules will appear here." icon={Pill}/>}</Card>
+    <AppointmentsPanel user={user} patientId={patient.id}/>
+  </div>;
+}
+
+/** Personal and contact details, care team, conditions, allergies and notes. */
+function PatientPersonalCard({patient}:{patient:PatientWithRecords}){
+  return <Card className="p-5 sm:p-6" testId="card-patient-personal"><h2 className="font-bold text-[#254954]">Personal information</h2>
+    <div className="mt-4 grid grid-cols-2 gap-x-4 gap-y-4"><Info label="Full name" value={patient.name}/><Info label="Age / Sex" value={`${patient.age} / ${patient.sex.replace('_',' ')}`}/><Info label="Phone" value={patient.phone||'Not provided'}/><Info label="Email" value={patient.email||'Not provided'}/><Info label="Doctor" value={`${patient.assignedProviderName||'Not assigned'}${patient.coveringProviderName?` (away, covered by ${patient.coveringProviderName})`:''}`}/><Info label="Profile status" value={patient.active?'Active':'Inactive'}/></div>
+    <div className="mt-5 grid gap-4 border-t border-[#edf2f2] pt-4 sm:grid-cols-2"><Info label="Conditions" value={patient.conditions?.join(', ')||'None listed'}/><Info label="Allergies" value={patient.allergies?.join(', ')||'None listed'}/>{patient.notes&&<div className="sm:col-span-2"><Info label="Care notes" value={patient.notes}/></div>}</div>
+  </Card>;
+}
+
+/** Current medications (with edit for the care team), the printable prescription and prescription files. */
+function PatientScheduleTab({user,patient}:{user:AuthUser;patient:PatientWithRecords}){
+  const canManage=user.role==='admin'||user.role==='provider';
+  const patients=useListPatients({query:{enabled:canManage,queryKey:getListPatientsQueryKey()}});
+  const [editing,setEditing]=useState<Medication|null>(null),[open,setOpen]=useState(false);
+  const current=(patient.medications||[]).filter(isCurrentMed);
+  return <div className="space-y-5">
+    <Card><div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><div><h2 className="font-bold text-[#254954]">Current medications</h2><p className="mt-1 text-xs text-[#81969b]">{current.length} active schedule{current.length===1?'':'s'}</p></div>{canManage&&<button data-testid="button-add-patient-medication" onClick={()=>{setEditing(null);setOpen(true)}} className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#17647a] px-3 text-xs font-semibold text-white hover:bg-[#125366]"><Plus size={14}/> Add medication</button>}</div>
+      {current.length?<MedicationTable meds={current} patientName={()=>patient.name} editable={canManage} onEdit={m=>{setEditing(m);setOpen(true)}} showPatient={false}/>:<EmptyState title="No active medications" body={canManage?'Add a medication to start this patient’s schedule.':'Active medication schedules will appear here.'} icon={Pill}/>}
+    </Card>
+    <div className="grid gap-5 xl:grid-cols-[1.1fr_.9fr]"><DigitalPrescription patientId={patient.id}/><LabResultsPanel patientId={patient.id} category="prescription" canUpload={canManage} canReview={false}/></div>
+    {open&&<MedicationModal medication={editing} patients={patients.data||[]} defaultPatientId={patient.id} onClose={()=>setOpen(false)}/>}
+  </div>;
+}
+
+/** Stopped or finished medications, and the recent dose log. */
+function PatientHistoryTab({patient}:{patient:PatientWithRecords}){
+  const past=(patient.medications||[]).filter(m=>!isCurrentMed(m));
+  const now=Date.now();
+  const log=(patient.recentDoses||[]).filter(d=>new Date(d.scheduledTime).getTime()<=now||d.status!=='scheduled');
+  const th='px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-[#6c858b]';
+  return <div className="grid gap-5 xl:grid-cols-2">
+    <Card><div className="border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><h2 className="font-bold text-[#254954]">Past medications</h2><p className="mt-1 text-xs text-[#81969b]">Completed or stopped schedules</p></div>{past.length?<ul className="divide-y divide-[#edf2f2]">{past.map(m=><li key={m.id} data-testid={`row-past-medication-${m.id}`} className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3.5 sm:px-6"><div className="min-w-[140px] flex-1"><div className="font-bold text-[#31535e]">{m.name}</div><div className="text-xs text-[#7d9297]">{frequencyText(m)}{m.prescribedByName?` · ${m.prescribedByName}`:''}</div></div><div className="text-sm font-bold text-[#254954]">{doseText(m.dosage)}</div><div className="text-xs text-[#6c858b]">{m.startDate} → {m.endDate||'stopped'}</div><StatusPill status="inactive"/></li>)}</ul>:<EmptyState title="No past medications" body="Completed or stopped medications will be listed here." icon={Pill}/>}</Card>
+    <Card><div className="border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><h2 className="font-bold text-[#254954]">Dose log</h2><p className="mt-1 text-xs text-[#81969b]">The most recent logged and missed doses</p></div>{log.length?<div className="overflow-x-auto"><table className="w-full text-sm"><thead className="border-b border-[#e6eeee] bg-[#f8fbfb]"><tr><th className={`${th} pl-5 sm:pl-6`}>When</th><th className={th}>Medication</th><th className={th}>Status</th></tr></thead><tbody className="divide-y divide-[#edf2f2]">{log.map(d=><tr key={d.id} data-testid={`row-patient-dose-${d.id}`}><td className="whitespace-nowrap py-3 pl-5 pr-4 text-[#3d5e67] sm:pl-6">{dateTimeLabel(d.scheduledTime)}</td><td className="px-4 py-3"><span className="font-semibold text-[#31535e]">{d.medicationName}</span> <span className="text-[#6c858b]">{doseText(d.dosage)}</span>{d.status==='taken'&&d.takenTime&&<div className="text-[11px] text-[#35896c]">Taken {timeLabel(d.takenTime)}</div>}</td><td className="px-4 py-3"><StatusPill status={d.status}/></td></tr>)}</tbody></table></div>:<EmptyState title="No dose history yet" body="Logged doses will show here as this schedule gets underway."/>}</Card>
+  </div>;
+}
+
+/** This patient's generated reports, with a button to create one now. */
+function PatientReportsCard({user,patient}:{user:AuthUser;patient:PatientWithRecords}){
+  const reports=useListReports({query:{enabled:user.role!=='patient',queryKey:getListReportsQueryKey()}});
+  const generate=useGenerateReport(),qc=useQueryClient();
+  const [period,setPeriod]=useState<'weekly'|'monthly'>('weekly'),[feedback,setFeedback]=useState('');
+  const canManage=user.role==='admin'||user.role==='provider';
+  const list=(reports.data||[]).filter(r=>r.patientId===patient.id);
+  const run=()=>{setFeedback('');generate.mutate({data:{period,patientId:patient.id}},{onSuccess:r=>{qc.invalidateQueries({queryKey:getListReportsQueryKey()});setFeedback(`Report ready for ${r.rangeStart} to ${r.rangeEnd}.`)},onError:()=>setFeedback('Report generation failed. Please try again.')})};
+  return <Card testId="card-patient-reports"><div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><div><h2 className="font-bold text-[#254954]">Adherence reports</h2><p className="mt-1 text-xs text-[#81969b]">Weekly and monthly summaries for {shortName(patient.name)}</p></div>{canManage&&<div className="flex gap-2"><select data-testid="select-patient-report-period" value={period} onChange={e=>setPeriod(e.target.value as 'weekly'|'monthly')} className="h-9 rounded-lg border border-input bg-white px-2 text-xs"><option value="weekly">Weekly</option><option value="monthly">Monthly</option></select><button data-testid="button-generate-patient-report" onClick={run} disabled={generate.isPending} className="h-9 rounded-lg bg-[#17647a] px-3 text-xs font-semibold text-white hover:bg-[#125366] disabled:opacity-50">{generate.isPending?'Generating…':'Generate'}</button></div>}</div>
+    {feedback&&<p role="status" className="mx-5 mt-3 text-xs text-[#37796b] sm:mx-6">{feedback}</p>}
+    {reports.isLoading?<ListSkeleton/>:reports.isError?<ErrorState retry={()=>reports.refetch()}/>:list.length===0?<EmptyState title="No reports yet" body={canManage?'Generate a weekly or monthly summary above.':'Reports for this patient will appear here.'} icon={FileText}/>:<div className="divide-y divide-[#edf2f2]">{list.map(r=><ReportRow key={r.id} report={r}/>)}</div>}
+  </Card>;
 }
 function HealthMetricsPanel({patientId,canRecord}:{patientId:number;canRecord:boolean}) {
   const qc=useQueryClient();
@@ -1412,7 +1631,6 @@ function MyHealthPage({user}:{user:AuthUser}){
   </div>;
 }
 function Info({label,value}:{label:string;value:string}){return <div><div className="text-[10px] font-bold uppercase tracking-wider text-[#8ba0a4]">{label}</div><div data-testid={`text-patient-${label.toLowerCase().replaceAll(' ','-')}`} className="mt-1 text-sm font-medium leading-5 text-[#3d5e67]">{value}</div></div>}
-function MedicationMini({med}:{med:Medication}){return <div data-testid={`card-patient-medication-${med.id}`} className="flex items-center gap-3 rounded-xl bg-[#f5f9f8] p-3"><div className="grid h-9 w-9 place-items-center rounded-lg bg-[#e2f2ee] text-[#39847e]"><Pill size={17}/></div><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-[#355761]">{med.name}</div><div className="mt-0.5 text-xs text-[#80969b]">{med.dosage} · {med.scheduleTimes.map(clock12).join(', ')||med.frequency.replace('_',' ')}</div>{med.sideEffects&&<div className="mt-1 text-[11px] leading-4 text-[#99702f]"><b>Side effects:</b> {med.sideEffects}</div>}</div></div>}
 function DetailSkeleton(){return <div data-testid="status-loading" className="space-y-5"><div className="h-32 animate-pulse rounded-3xl bg-[#dfeceb]"/><div className="grid gap-5 sm:grid-cols-2"><div className="h-80 animate-pulse rounded-2xl bg-white"/><div className="h-80 animate-pulse rounded-2xl bg-white"/></div></div>}
 
 function MedicationsPage({user}:{user:AuthUser}){
@@ -1425,16 +1643,66 @@ function MedicationsPage({user}:{user:AuthUser}){
   const start=(med?:Medication)=>{setEditing(med||null);setOpen(true)};
   return <div className="page-enter"><PageHeading eyebrow="Medication coordination" title="Medications" description="Schedules assigned to your patients, with the details that keep routines on track." action={authorized?<button data-testid="button-add-medication" onClick={()=>start()} className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#17647a] px-4 text-sm font-semibold text-white hover:bg-[#125366]"><Plus size={16}/> New schedule</button>:undefined}/>
     <Card><div className="flex flex-col gap-4 border-b border-[#eaf0f0] p-5 sm:flex-row sm:items-center sm:justify-between sm:px-6"><div><h2 className="font-bold text-[#254954]">Medication schedules</h2><p className="mt-1 text-xs text-[#81969b]">{list.length} schedule{list.length===1?'':'s'} shown</p></div><div className="flex flex-col gap-2 sm:flex-row"><label className="flex h-10 items-center gap-2 rounded-xl border border-[#dce8e8] bg-[#fbfdfd] px-3"><Search size={15} className="text-[#81969b]"/><input data-testid="input-search-medications" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search schedules…" className="w-full bg-transparent text-sm outline-none sm:w-40"/></label><select data-testid="select-filter-medication-patient" value={patientFilter} onChange={e=>setPatientFilter(e.target.value)} className="h-10 rounded-xl border border-[#dce8e8] bg-white px-3 text-xs text-[#55737a]"><option value="all">All patients</option>{(patients.data||[]).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></div></div>
-      {meds.isLoading||patients.isLoading?<div className="space-y-3 p-5" data-testid="status-loading">{[1,2,3].map(x=><div key={x} className="h-20 animate-pulse rounded-xl bg-[#f2f6f6]"/>)}</div>:meds.isError||patients.isError?<ErrorState retry={()=>{meds.refetch();patients.refetch()}}/>:list.length===0?<EmptyState title={search?'No matching schedules':'No schedules yet'} body={search?'Try a different medication or patient name.':'Schedules added for your patients will appear here.'} icon={Pill}/>:<div className="divide-y divide-[#edf2f2]">{list.map(m=><MedicationRow key={m.id} med={m} patientName={patientName(m.patientId)} editable={authorized} onEdit={()=>start(m)}/>)}</div>}
+      {meds.isLoading||patients.isLoading?<div className="space-y-3 p-5" data-testid="status-loading">{[1,2,3].map(x=><div key={x} className="h-20 animate-pulse rounded-xl bg-[#f2f6f6]"/>)}</div>:meds.isError||patients.isError?<ErrorState retry={()=>{meds.refetch();patients.refetch()}}/>:list.length===0?<EmptyState title={search?'No matching schedules':'No schedules yet'} body={search?'Try a different medication or patient name.':'Schedules added for your patients will appear here.'} icon={Pill}/>:<MedicationTable meds={list} patientName={patientName} editable={authorized} onEdit={start} linkPatients/>}
     </Card>{open&&<MedicationModal medication={editing} patients={patients.data||[]} onClose={()=>setOpen(false)}/>}
   </div>;
 }
-function MedicationRow({med,patientName,editable,onEdit}:{med:Medication;patientName:string;editable:boolean;onEdit:()=>void}){
+// ---- Medication table: every important detail in its own column (no small print) ----
+/** "10mg" → "10 mg", "500 MG" → "500 mg"; other units unchanged. */
+const doseText=(dosage:string)=>dosage.trim().replace(/(\d)\s*(mg|mcg|g|ml|iu)\b/gi,(_,n:string,u:string)=>`${n} ${u.toLowerCase()==='iu'?'IU':u.toLowerCase()}`);
+const DAY_NAMES=['Sun','Mon','Tue','Wed','Thu','Fri','Sat'];
+/** How often, in plain words: "Once daily", "Twice daily", "Every 8 hours", "Mon, Wed, Fri". */
+const frequencyText=(m:Medication)=>m.frequency==='every_hours'?`Every ${m.intervalHours||'?'} hours`:m.frequency==='specific_days'?((m.daysOfWeek||[]).length?(m.daysOfWeek||[]).slice().sort().map(d=>DAY_NAMES[d]).join(', '):'Specific days'):m.timesPerDay===1?'Once daily':m.timesPerDay===2?'Twice daily':`${m.timesPerDay} times daily`;
+/** The times a dose is due: "8:00 AM", or the first time for interval schedules. */
+const scheduleTimesOf=(m:Medication)=>m.frequency==='every_hours'?(m.scheduleTimes?.[0]?[`From ${clock12(m.scheduleTimes[0])}`]:[]):(m.scheduleTimes||[]).map(clock12);
+function MedicationStatus({med}:{med:Medication}){
+  const today=dateToday();
+  const ended=!!med.endDate&&med.endDate<today, upcoming=med.startDate>today;
+  return <div><StatusPill status={!med.active||ended?'inactive':'active'}/>{med.active&&<div className="mt-1 text-[11px] text-[#7d9297]">{ended?`Ended ${med.endDate}`:upcoming?`Starts ${med.startDate}`:med.endDate?`Until ${med.endDate}`:'Ongoing'}</div>}</div>;
+}
+/** Edit / Deactivate / Delete for one medication (doctors and admins). */
+function MedicationActions({med,onEdit}:{med:Medication;onEdit:()=>void}){
   const update=useUpdateMedication(), remove=useDeleteMedication(), qc=useQueryClient();
   const [message,setMessage]=useState('');
-  const toggle=()=>{update.mutate({id:med.id,data:{active:!med.active}},{onSuccess:()=>{qc.invalidateQueries({queryKey:getListMedicationsQueryKey()});setMessage(med.active?'Schedule deactivated':'Schedule activated')},onError:()=>setMessage('Could not update schedule')})};
-  const del=()=>{if(window.confirm(`Permanently delete ${med.name}?`))remove.mutate({id:med.id},{onSuccess:()=>qc.invalidateQueries({queryKey:getListMedicationsQueryKey()}),onError:()=>setMessage('Could not remove schedule')})};
-  return <div data-testid={`row-medication-${med.id}`} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:gap-4 sm:px-6"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e8f4f1] text-[#39847e]"><Pill size={19}/></div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-bold text-[#31535e]" data-testid={`text-medication-name-${med.id}`}>{med.name}</span><StatusPill status={med.active?'active':'inactive'}/></div><div className="mt-1 flex flex-wrap gap-x-3 text-xs text-[#81969b]"><span>{med.dosage} · {med.form||'Medication'}</span><span>{patientName}</span><span>{med.frequency==='every_hours'?`Every ${med.intervalHours||'?'} hours`:med.frequency==='specific_days'?`${med.daysOfWeek?.length||0} days per week`:`${med.timesPerDay}× daily`}</span><span>{med.scheduleTimes?.map(clock12).join(', ')}</span></div>{med.sideEffects&&<div data-testid={`text-medication-side-effects-${med.id}`} className="mt-1.5 text-[11px] leading-4 text-[#99702f]"><b>Side effects to watch for:</b> {med.sideEffects}</div>}</div><div className="flex items-center gap-2 pl-[52px] sm:pl-0">{message&&<span className="text-[11px] text-[#448279]">{message}</span>}{editable&&<><button data-testid={`button-edit-medication-${med.id}`} onClick={onEdit} className="rounded-lg border border-[#dce8e8] px-3 py-2 text-xs font-semibold text-[#52737c] hover:bg-[#f5f9f9]">Edit</button><button data-testid={`button-toggle-medication-${med.id}`} disabled={update.isPending} onClick={toggle} className="rounded-lg px-3 py-2 text-xs font-semibold text-[#71868c] hover:bg-[#f3f7f7]">{med.active?'Deactivate':'Activate'}</button>{!med.active&&<button data-testid={`button-delete-medication-${med.id}`} disabled={remove.isPending} onClick={del} className="rounded-lg px-2 py-2 text-xs font-semibold text-[#a85a50] hover:bg-red-50">Delete</button>}</>}</div></div>;
+  const refresh=()=>{qc.invalidateQueries({queryKey:getListMedicationsQueryKey()});qc.invalidateQueries({predicate:q=>String(q.queryKey[0]).startsWith('/api/patients/')})};
+  const toggle=()=>{if(med.active&&!window.confirm(`Deactivate ${med.name}? Future doses will no longer be scheduled.`))return;update.mutate({id:med.id,data:{active:!med.active}},{onSuccess:()=>{refresh();setMessage(med.active?'Deactivated':'Activated')},onError:()=>setMessage('Could not update')})};
+  const del=()=>{if(window.confirm(`Permanently delete ${med.name}?`))remove.mutate({id:med.id},{onSuccess:refresh,onError:()=>setMessage('Could not remove')})};
+  return <div className="flex flex-wrap items-center justify-end gap-1.5">{message&&<span role="status" className="text-[11px] text-[#448279]">{message}</span>}<button data-testid={`button-edit-medication-${med.id}`} onClick={onEdit} className="h-9 rounded-lg border border-[#dce8e8] px-3 text-xs font-semibold text-[#52737c] hover:bg-[#f5f9f9]">Edit</button><button data-testid={`button-toggle-medication-${med.id}`} disabled={update.isPending} onClick={toggle} className="h-9 rounded-lg px-3 text-xs font-semibold text-[#71868c] hover:bg-[#f3f7f7] disabled:opacity-50">{med.active?'Deactivate':'Activate'}</button>{!med.active&&<button data-testid={`button-delete-medication-${med.id}`} disabled={remove.isPending} onClick={del} className="h-9 rounded-lg px-2 text-xs font-semibold text-[#a85a50] hover:bg-red-50">Delete</button>}</div>;
+}
+/**
+ * Medication records as a table: Patient · Medication · Dosage · Frequency · Schedule · Status ·
+ * Actions. The patient's name opens their profile. On phones each record becomes a card with
+ * the same labelled fields, so nothing important is hidden in small print.
+ */
+function MedicationTable({meds,patientName,editable,onEdit,linkPatients=false,showPatient=true}:{meds:Medication[];patientName:(id:number)=>string;editable:boolean;onEdit:(m:Medication)=>void;linkPatients?:boolean;showPatient?:boolean}){
+  const [sort,setSort]=useState<'patient'|'medication'>(showPatient?'patient':'medication');
+  const rows=meds.slice().sort((a,b)=>sort==='patient'?patientName(a.patientId).localeCompare(patientName(b.patientId))||a.name.localeCompare(b.name):a.name.localeCompare(b.name)||patientName(a.patientId).localeCompare(patientName(b.patientId)));
+  const who=(m:Medication)=>linkPatients?<Link href={`/patients/${m.patientId}`} data-testid={`link-medication-patient-${m.id}`} className="font-semibold text-[#17647a] underline-offset-2 hover:underline">{patientName(m.patientId)}</Link>:<span className="font-semibold text-[#31535e]">{patientName(m.patientId)}</span>;
+  const sideEffects=(m:Medication)=>m.sideEffects&&<div data-testid={`text-medication-side-effects-${m.id}`} className="mt-1 text-xs leading-5 text-[#8a6a2a]"><b>Side effects:</b> {m.sideEffects}</div>;
+  const times=(m:Medication)=>{const t=scheduleTimesOf(m);return t.length?<div className="flex flex-wrap gap-1">{t.map(x=><span key={x} className="whitespace-nowrap rounded-md bg-[#eef5f7] px-2 py-0.5 text-xs font-semibold text-[#2f5d6b]">{x}</span>)}</div>:<span className="text-xs text-[#91a4a8]">Not set</span>};
+  const th='px-4 py-3 text-left text-[11px] font-bold uppercase tracking-wider text-[#6c858b]';
+  const sortBtn=(key:'patient'|'medication',label:string)=><button type="button" onClick={()=>setSort(key)} aria-pressed={sort===key} className={`inline-flex items-center gap-1 uppercase tracking-wider ${sort===key?'text-[#17647a]':'hover:text-[#17647a]'}`}>{label}{sort===key&&<span aria-hidden="true">↓</span>}</button>;
+  return <>
+    <div className="hidden overflow-x-auto md:block"><table className="w-full border-collapse text-sm" data-testid="table-medications">
+      <thead className="border-b border-[#e6eeee] bg-[#f8fbfb]"><tr>{showPatient&&<th className={`${th} pl-6`}>{sortBtn('patient','Patient')}</th>}<th className={`${th} ${showPatient?'':'pl-6'}`}>{showPatient?sortBtn('medication','Medication'):'Medication'}</th><th className={th}>Dosage</th><th className={th}>Frequency</th><th className={th}>Schedule</th><th className={th}>Status</th>{editable&&<th className={`${th} pr-6 text-right`}>Actions</th>}</tr></thead>
+      <tbody className="divide-y divide-[#edf2f2]">{rows.map(m=><tr key={m.id} data-testid={`row-medication-${m.id}`} className="align-top transition hover:bg-[#fafcfc]">
+        {showPatient&&<td className="py-3.5 pl-6 pr-4">{who(m)}</td>}
+        <td className={`max-w-[280px] py-3.5 pr-4 ${showPatient?'pl-4':'pl-6'}`}><div className="font-bold text-[#254954]" data-testid={`text-medication-name-${m.id}`}>{m.name}</div><div className="text-xs text-[#7d9297]">{m.form||'Medication'}</div>{sideEffects(m)}</td>
+        <td className="whitespace-nowrap px-4 py-3.5 text-[15px] font-bold text-[#254954]" data-testid={`text-medication-dosage-${m.id}`}>{doseText(m.dosage)}</td>
+        <td className="whitespace-nowrap px-4 py-3.5 font-medium text-[#3d5e67]">{frequencyText(m)}</td>
+        <td className="px-4 py-3.5">{times(m)}</td>
+        <td className="px-4 py-3.5"><MedicationStatus med={m}/></td>
+        {editable&&<td className="py-3 pl-4 pr-6"><MedicationActions med={m} onEdit={()=>onEdit(m)}/></td>}
+      </tr>)}</tbody>
+    </table></div>
+    <ul className="divide-y divide-[#edf2f2] md:hidden" data-testid="list-medications-mobile">{rows.map(m=><li key={m.id} data-testid={`card-medication-${m.id}`} className="px-5 py-4">
+      {showPatient&&<div className="mb-1 text-sm">{who(m)}</div>}
+      <div className="flex items-start justify-between gap-3"><div className="min-w-0"><div className="text-base font-bold text-[#254954]">{m.name}</div><div className="text-xs text-[#7d9297]">{m.form||'Medication'}</div></div><MedicationStatus med={m}/></div>
+      <dl className="mt-3 grid grid-cols-2 gap-x-4 gap-y-2.5"><div><dt className="text-[10px] font-bold uppercase tracking-wider text-[#8ba0a4]">Dosage</dt><dd className="text-[15px] font-bold text-[#254954]">{doseText(m.dosage)}</dd></div><div><dt className="text-[10px] font-bold uppercase tracking-wider text-[#8ba0a4]">Frequency</dt><dd className="text-sm font-medium text-[#3d5e67]">{frequencyText(m)}</dd></div><div className="col-span-2"><dt className="mb-1 text-[10px] font-bold uppercase tracking-wider text-[#8ba0a4]">Schedule</dt><dd>{times(m)}</dd></div></dl>
+      {sideEffects(m)}
+      {editable&&<div className="mt-3"><MedicationActions med={m} onEdit={()=>onEdit(m)}/></div>}
+    </li>)}</ul>
+  </>;
 }
 /** End date from an explicit date, or from a course length counted from the start date. */
 function courseEnd(start:string,end:string,days:number){if(end)return end;if(!days)return null;const d=new Date(`${start}T12:00:00`);d.setDate(d.getDate()+days-1);return d.toLocaleDateString('en-CA')}

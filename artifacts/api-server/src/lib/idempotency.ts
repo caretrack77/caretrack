@@ -54,6 +54,18 @@ export async function ensureSchemaAdditions(): Promise<void> {
     ALTER TABLE "caretrack_users" ADD COLUMN IF NOT EXISTS "phone_verified_at" timestamp with time zone;
     ALTER TABLE "caretrack_otp_challenges" ADD COLUMN IF NOT EXISTS "sms_phone" text;
     ALTER TABLE "caretrack_medications" ADD COLUMN IF NOT EXISTS "side_effects" text;
+    CREATE TABLE IF NOT EXISTS "caretrack_staff_messages" (
+      "id" serial PRIMARY KEY NOT NULL,
+      "sender_id" integer REFERENCES "caretrack_users"("id") ON DELETE set null,
+      "recipient_id" integer REFERENCES "caretrack_users"("id") ON DELETE set null,
+      "body" text NOT NULL,
+      "read_at" timestamp with time zone,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL
+    );
+    CREATE INDEX IF NOT EXISTS "caretrack_staff_messages_pair_idx"
+      ON "caretrack_staff_messages" USING btree ("sender_id", "recipient_id", "created_at");
+    CREATE INDEX IF NOT EXISTS "caretrack_staff_messages_recipient_idx"
+      ON "caretrack_staff_messages" USING btree ("recipient_id", "read_at");
   `);
 }
 

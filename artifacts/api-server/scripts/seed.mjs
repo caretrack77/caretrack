@@ -19,23 +19,25 @@ const DEMO_PASSWORD = "demo1234";
 
 const demoUsers = [
   { key: "admin", name: "Carla Mendoza", email: "admin@caretrack.com", role: "admin", phone: "09170000001" },
-  { key: "provider1", name: "Dr. Mira Santos", email: "doctor@caretrack.com", role: "provider", phone: "09170000002" },
-  { key: "provider2", name: "Dr. Joel Reyes", email: "doctor2@caretrack.com", role: "provider", phone: "09170000003" },
-  { key: "patient", name: "Alex Morgan", email: "patient@caretrack.com", role: "patient", phone: "09170000004" },
+  { key: "provider1", name: "Dr. Baltazar, Alessa Mikkah", email: "doctor@caretrack.com", role: "provider", phone: "09170000002" },
+  { key: "provider2", name: "Dr. Idago, Gremory Dennis", email: "doctor2@caretrack.com", role: "provider", phone: "09170000003" },
+  { key: "patient", name: "Andrade, Francisca Santiago", email: "patient@caretrack.com", role: "patient", phone: "09170000004" },
   { key: "caregiver", name: "Jordan Morgan", email: "caregiver@caretrack.com", role: "caregiver", phone: "09170000005" },
 ];
 
+// Names are "Last, First Middle". The last three demo profiles are kept but inactive (hidden
+// from every list and from reminders); their records stay in the database.
 const patientSeed = [
-  ["Alex Morgan", 58, "male", ["Hypertension"], ["Penicillin"], 0.96],
-  ["Sofia Rivera", 64, "female", ["Type 2 diabetes"], [], 0.91],
-  ["Noah Kim", 72, "male", ["High cholesterol"], ["Sulfa"], 0.86],
-  ["Lena Patel", 49, "female", ["Hypertension", "Migraine"], [], 0.82],
-  ["Ethan Brooks", 67, "male", ["Type 2 diabetes"], [], 0.77],
-  ["Amara Johnson", 55, "female", ["High cholesterol"], ["Latex"], 0.71],
-  ["Mateo Cruz", 76, "male", ["Hypertension"], [], 0.66],
-  ["Nina Chen", 61, "female", ["Anxiety"], [], 0.58],
-  ["Caleb Davis", 70, "male", ["Type 2 diabetes", "Hypertension"], [], 0.48],
-  ["Priya Nair", 53, "female", ["Reflux"], ["Ibuprofen"], 0.37],
+  ["Andrade, Francisca Santiago", 58, "female", ["Hypertension"], ["Penicillin"], 0.96],
+  ["Lingad, Enrico Viray", 64, "male", ["Type 2 diabetes"], [], 0.91],
+  ["Borja, Josephine Ragasa", 72, "female", ["High cholesterol"], ["Sulfa"], 0.86],
+  ["Esteban, Aubrey Shaine Lazaro", 49, "female", ["Hypertension", "Migraine"], [], 0.82],
+  ["Labar, Mary Jane Manuel", 67, "female", ["Type 2 diabetes"], [], 0.77],
+  ["Flavier, Ivy Nicole", 55, "female", ["High cholesterol"], ["Latex"], 0.71],
+  ["Valdez, Shyrenne Arriola", 76, "female", ["Hypertension"], [], 0.66],
+  ["Nina Chen", 61, "female", ["Anxiety"], [], 0.58, false],
+  ["Caleb Davis", 70, "male", ["Type 2 diabetes", "Hypertension"], [], 0.48, false],
+  ["Priya Nair", 53, "female", ["Reflux"], ["Ibuprofen"], 0.37, false],
 ];
 
 const medicationTemplates = [
@@ -99,13 +101,13 @@ try {
   }
 
   for (let index = 0; index < patientSeed.length; index += 1) {
-    const [name, age, sex, conditions, allergies] = patientSeed[index];
+    const [name, age, sex, conditions, allergies, , active = true] = patientSeed[index];
     const email = `patient${index + 1}@caretrack.test`;
     const userId = index === 0 ? userIds.patient : null;
     const result = await client.query(
       `INSERT INTO caretrack_patients
          (user_id, name, age, sex, email, conditions, allergies, notes, active)
-       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, true)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9)
        ON CONFLICT (email) DO UPDATE SET
          user_id = EXCLUDED.user_id,
          name = EXCLUDED.name,
@@ -114,7 +116,7 @@ try {
          conditions = EXCLUDED.conditions,
          allergies = EXCLUDED.allergies,
          notes = EXCLUDED.notes,
-         active = true
+         active = EXCLUDED.active
        RETURNING id`,
       [
         userId,
@@ -125,6 +127,7 @@ try {
         conditions,
         allergies,
         "Fictional capstone demonstration profile. Not for clinical use.",
+        active,
       ],
     );
     const patientId = result.rows[0].id;

@@ -458,6 +458,27 @@ export const otpChallengesTable = pgTable(
 );
 
 /** Patient and care-team messages. Each patient has one shared conversation. */
+/**
+ * Internal admin–doctor messages (system, patient-related or clinic-operations concerns).
+ * Kept apart from patient conversations: caretrack_messages always belongs to one patient's
+ * thread, which patients and caregivers can read. Bodies are encrypted like patient messages.
+ */
+export const staffMessagesTable = pgTable(
+  "caretrack_staff_messages",
+  {
+    id: serial("id").primaryKey(),
+    senderId: integer("sender_id").references(() => usersTable.id, { onDelete: "set null" }),
+    recipientId: integer("recipient_id").references(() => usersTable.id, { onDelete: "set null" }),
+    body: text("body").notNull(),
+    readAt: timestamp("read_at", { withTimezone: true }),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+  },
+  (table) => [
+    index("caretrack_staff_messages_pair_idx").on(table.senderId, table.recipientId, table.createdAt),
+    index("caretrack_staff_messages_recipient_idx").on(table.recipientId, table.readAt),
+  ],
+);
+
 export const messagesTable = pgTable(
   "caretrack_messages",
   {

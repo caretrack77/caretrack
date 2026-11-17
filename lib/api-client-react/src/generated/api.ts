@@ -34,6 +34,7 @@ import type {
   AssistantReply,
   AuditLog,
   AuthUser,
+  CalendarMessage,
   ChangePasswordInput,
   Coverage,
   CoverageInput,
@@ -63,6 +64,7 @@ import type {
   ListDosesParams,
   ListMedicalHistory200Item,
   ListMedicationsParams,
+  ListMessageCalendarParams,
   ListPatientPrescriptions200Item,
   ListPatientRecordHistory200Item,
   LoginChallenge,
@@ -97,6 +99,8 @@ import type {
   RiskPrediction,
   RiskTrainResult,
   SimulationResult,
+  StaffMessage,
+  StaffThread,
   User,
   UserInput,
   UserUpdate
@@ -2778,6 +2782,479 @@ export function useListMessageThreads<TData = Awaited<ReturnType<typeof listMess
 
 
 
+
+export const getListMessageCalendarUrl = (params: ListMessageCalendarParams,) => {
+  const normalizedParams = new URLSearchParams();
+
+  Object.entries(params || {}).forEach(([key, value]) => {
+
+    if (value !== undefined) {
+      normalizedParams.append(key, value === null ? 'null' : String(value))
+    }
+  });
+
+  const stringifiedParams = normalizedParams.toString();
+
+  return stringifiedParams.length > 0 ? `/api/messages/calendar?${stringifiedParams}` : `/api/messages/calendar`
+}
+
+/**
+ * @summary Patient-conversation messages in a date range, for the calendar view
+ */
+export const listMessageCalendar = async (params: ListMessageCalendarParams, options?: Parameters<typeof customFetch>[1]): Promise<CalendarMessage[]> => {
+
+  return customFetch<CalendarMessage[]>(getListMessageCalendarUrl(params),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListMessageCalendarQueryKey = (params?: ListMessageCalendarParams,) => {
+    return [
+    `/api/messages/calendar`, ...(params ? [params] : [])
+    ] as const;
+    }
+
+
+export const getListMessageCalendarQueryOptions = <TData = Awaited<ReturnType<typeof listMessageCalendar>>, TError = ErrorType<unknown>>(params: ListMessageCalendarParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMessageCalendar>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListMessageCalendarQueryKey(params);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listMessageCalendar>>> = ({ signal }) => listMessageCalendar(params, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listMessageCalendar>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListMessageCalendarQueryResult = NonNullable<Awaited<ReturnType<typeof listMessageCalendar>>>
+export type ListMessageCalendarQueryError = ErrorType<unknown>
+
+
+export function useListMessageCalendar<TData = Awaited<ReturnType<typeof listMessageCalendar>>, TError = ErrorType<unknown>>(
+ params: ListMessageCalendarParams, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMessageCalendar>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listMessageCalendar>>,
+          TError,
+          Awaited<ReturnType<typeof listMessageCalendar>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMessageCalendar<TData = Awaited<ReturnType<typeof listMessageCalendar>>, TError = ErrorType<unknown>>(
+ params: ListMessageCalendarParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMessageCalendar>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listMessageCalendar>>,
+          TError,
+          Awaited<ReturnType<typeof listMessageCalendar>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListMessageCalendar<TData = Awaited<ReturnType<typeof listMessageCalendar>>, TError = ErrorType<unknown>>(
+ params: ListMessageCalendarParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMessageCalendar>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Patient-conversation messages in a date range, for the calendar view
+ */
+
+export function useListMessageCalendar<TData = Awaited<ReturnType<typeof listMessageCalendar>>, TError = ErrorType<unknown>>(
+ params: ListMessageCalendarParams, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listMessageCalendar>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListMessageCalendarQueryOptions(params,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListStaffThreadsUrl = () => {
+
+
+
+
+  return `/api/staff-messages/threads`
+}
+
+/**
+ * @summary Admin–doctor conversations for the signed-in admin or doctor (one per colleague)
+ */
+export const listStaffThreads = async ( options?: Parameters<typeof customFetch>[1]): Promise<StaffThread[]> => {
+
+  return customFetch<StaffThread[]>(getListStaffThreadsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListStaffThreadsQueryKey = () => {
+    return [
+    `/api/staff-messages/threads`
+    ] as const;
+    }
+
+
+export const getListStaffThreadsQueryOptions = <TData = Awaited<ReturnType<typeof listStaffThreads>>, TError = ErrorType<unknown>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listStaffThreads>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListStaffThreadsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listStaffThreads>>> = ({ signal }) => listStaffThreads({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listStaffThreads>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListStaffThreadsQueryResult = NonNullable<Awaited<ReturnType<typeof listStaffThreads>>>
+export type ListStaffThreadsQueryError = ErrorType<unknown>
+
+
+export function useListStaffThreads<TData = Awaited<ReturnType<typeof listStaffThreads>>, TError = ErrorType<unknown>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listStaffThreads>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listStaffThreads>>,
+          TError,
+          Awaited<ReturnType<typeof listStaffThreads>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListStaffThreads<TData = Awaited<ReturnType<typeof listStaffThreads>>, TError = ErrorType<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listStaffThreads>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listStaffThreads>>,
+          TError,
+          Awaited<ReturnType<typeof listStaffThreads>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListStaffThreads<TData = Awaited<ReturnType<typeof listStaffThreads>>, TError = ErrorType<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listStaffThreads>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Admin–doctor conversations for the signed-in admin or doctor (one per colleague)
+ */
+
+export function useListStaffThreads<TData = Awaited<ReturnType<typeof listStaffThreads>>, TError = ErrorType<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listStaffThreads>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListStaffThreadsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getListStaffMessagesUrl = (userId: number,) => {
+
+
+
+
+  return `/api/staff-messages/${userId}`
+}
+
+/**
+ * @summary Messages between the signed-in user and one colleague
+ */
+export const listStaffMessages = async (userId: number, options?: Parameters<typeof customFetch>[1]): Promise<StaffMessage[]> => {
+
+  return customFetch<StaffMessage[]>(getListStaffMessagesUrl(userId),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListStaffMessagesQueryKey = (userId: number,) => {
+    return [
+    `/api/staff-messages/${userId}`
+    ] as const;
+    }
+
+
+export const getListStaffMessagesQueryOptions = <TData = Awaited<ReturnType<typeof listStaffMessages>>, TError = ErrorType<unknown>>(userId: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listStaffMessages>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListStaffMessagesQueryKey(userId);
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listStaffMessages>>> = ({ signal }) => listStaffMessages(userId, { signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, enabled: userId !== null && userId !== undefined, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listStaffMessages>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListStaffMessagesQueryResult = NonNullable<Awaited<ReturnType<typeof listStaffMessages>>>
+export type ListStaffMessagesQueryError = ErrorType<unknown>
+
+
+export function useListStaffMessages<TData = Awaited<ReturnType<typeof listStaffMessages>>, TError = ErrorType<unknown>>(
+ userId: number, options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listStaffMessages>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listStaffMessages>>,
+          TError,
+          Awaited<ReturnType<typeof listStaffMessages>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListStaffMessages<TData = Awaited<ReturnType<typeof listStaffMessages>>, TError = ErrorType<unknown>>(
+ userId: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listStaffMessages>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listStaffMessages>>,
+          TError,
+          Awaited<ReturnType<typeof listStaffMessages>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListStaffMessages<TData = Awaited<ReturnType<typeof listStaffMessages>>, TError = ErrorType<unknown>>(
+ userId: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listStaffMessages>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Messages between the signed-in user and one colleague
+ */
+
+export function useListStaffMessages<TData = Awaited<ReturnType<typeof listStaffMessages>>, TError = ErrorType<unknown>>(
+ userId: number, options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listStaffMessages>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListStaffMessagesQueryOptions(userId,options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getSendStaffMessageUrl = (userId: number,) => {
+
+
+
+
+  return `/api/staff-messages/${userId}`
+}
+
+/**
+ * @summary Send a message to a colleague (admin to doctor, or doctor to admin)
+ */
+export const sendStaffMessage = async (userId: number,
+    messageInput: MessageInput, options?: Parameters<typeof customFetch>[1]): Promise<StaffMessage> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<StaffMessage>(getSendStaffMessageUrl(userId),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(messageInput)
+  }
+);}
+
+
+
+
+
+export const getSendStaffMessageMutationKey = () => ['sendStaffMessage'] as const;
+
+export const getSendStaffMessageMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendStaffMessage>>, TError,SendStaffMessageMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof sendStaffMessage>>, TError,SendStaffMessageMutationVariables, TContext> => {
+
+const mutationKey = getSendStaffMessageMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof sendStaffMessage>>, SendStaffMessageMutationVariables> = (props) => {
+          const {userId,data} = props ?? {};
+
+          return  sendStaffMessage(userId,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type SendStaffMessageMutationResult = NonNullable<Awaited<ReturnType<typeof sendStaffMessage>>>
+    export type SendStaffMessageMutationBody = BodyType<MessageInput>
+    export type SendStaffMessageMutationError = ErrorType<unknown>
+    export type SendStaffMessageMutationVariables = {userId: number;data: BodyType<MessageInput>}
+
+    /**
+ * @summary Send a message to a colleague (admin to doctor, or doctor to admin)
+ */
+export const useSendStaffMessage = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof sendStaffMessage>>, TError,SendStaffMessageMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof sendStaffMessage>>,
+        TError,
+        SendStaffMessageMutationVariables,
+        TContext
+      > => {
+      return useMutation(getSendStaffMessageMutationOptions(options), queryClient);
+    }
+
+export const getMarkStaffMessagesReadUrl = (userId: number,) => {
+
+
+
+
+  return `/api/staff-messages/${userId}/read`
+}
+
+/**
+ * @summary Mark a colleague's messages to the signed-in user as read
+ */
+export const markStaffMessagesRead = async (userId: number, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getMarkStaffMessagesReadUrl(userId),
+  {
+    ...options,
+    method: 'POST'
+
+
+  }
+);}
+
+
+
+
+
+export const getMarkStaffMessagesReadMutationKey = () => ['markStaffMessagesRead'] as const;
+
+export const getMarkStaffMessagesReadMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markStaffMessagesRead>>, TError,MarkStaffMessagesReadMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof markStaffMessagesRead>>, TError,MarkStaffMessagesReadMutationVariables, TContext> => {
+
+const mutationKey = getMarkStaffMessagesReadMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof markStaffMessagesRead>>, MarkStaffMessagesReadMutationVariables> = (props) => {
+          const {userId} = props ?? {};
+
+          return  markStaffMessagesRead(userId,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type MarkStaffMessagesReadMutationResult = NonNullable<Awaited<ReturnType<typeof markStaffMessagesRead>>>
+
+    export type MarkStaffMessagesReadMutationError = ErrorType<unknown>
+    export type MarkStaffMessagesReadMutationVariables = {userId: number}
+
+    /**
+ * @summary Mark a colleague's messages to the signed-in user as read
+ */
+export const useMarkStaffMessagesRead = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof markStaffMessagesRead>>, TError,MarkStaffMessagesReadMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof markStaffMessagesRead>>,
+        TError,
+        MarkStaffMessagesReadMutationVariables,
+        TContext
+      > => {
+      return useMutation(getMarkStaffMessagesReadMutationOptions(options), queryClient);
+    }
 
 export const getListPatientMessagesUrl = (id: number,) => {
 

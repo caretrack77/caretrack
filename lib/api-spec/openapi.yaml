@@ -537,6 +537,92 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/MessageThread" }
+  /messages/calendar:
+    get:
+      operationId: listMessageCalendar
+      tags: [messages]
+      summary: Patient-conversation messages in a date range, for the calendar view
+      parameters:
+        - name: from
+          in: query
+          required: true
+          schema: { type: string, format: date }
+        - name: to
+          in: query
+          required: true
+          schema: { type: string, format: date }
+      responses:
+        "200":
+          description: Messages in the range, oldest first (at most 1000)
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/CalendarMessage" }
+  /staff-messages/threads:
+    get:
+      operationId: listStaffThreads
+      tags: [messages]
+      summary: Admin–doctor conversations for the signed-in admin or doctor (one per colleague)
+      responses:
+        "200":
+          description: Threads
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/StaffThread" }
+  /staff-messages/{userId}:
+    get:
+      operationId: listStaffMessages
+      tags: [messages]
+      summary: Messages between the signed-in user and one colleague
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "200":
+          description: Messages, oldest first
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/StaffMessage" }
+    post:
+      operationId: sendStaffMessage
+      tags: [messages]
+      summary: Send a message to a colleague (admin to doctor, or doctor to admin)
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/MessageInput" }
+      responses:
+        "201":
+          description: Sent message
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/StaffMessage" }
+  /staff-messages/{userId}/read:
+    post:
+      operationId: markStaffMessagesRead
+      tags: [messages]
+      summary: Mark a colleague's messages to the signed-in user as read
+      parameters:
+        - name: userId
+          in: path
+          required: true
+          schema: { type: integer }
+      responses:
+        "204":
+          description: Marked as read
   /patients/{id}/messages:
     get:
       operationId: listPatientMessages
@@ -1591,6 +1677,41 @@ components:
       properties:
         body: { type: string, minLength: 1, maxLength: 2000 }
       required: [body]
+    CalendarMessage:
+      type: object
+      properties:
+        id: { type: integer }
+        patientId: { type: integer }
+        patientName: { type: string }
+        senderId: { type: ["integer", "null"] }
+        senderName: { type: string }
+        senderRole: { type: string }
+        body: { type: string }
+        createdAt: { type: string }
+      required: [id, patientId, patientName, senderId, senderName, senderRole, body, createdAt]
+    StaffThread:
+      type: object
+      properties:
+        userId: { type: integer }
+        name: { type: string }
+        role: { type: string, enum: [admin, provider] }
+        lastMessage: { type: ["string", "null"] }
+        lastMessageAt: { type: ["string", "null"] }
+        lastFromMe: { type: boolean }
+        unreadCount: { type: integer }
+      required: [userId, name, role, lastMessage, lastMessageAt, lastFromMe, unreadCount]
+    StaffMessage:
+      type: object
+      properties:
+        id: { type: integer }
+        senderId: { type: ["integer", "null"] }
+        senderName: { type: string }
+        senderRole: { type: string }
+        recipientId: { type: ["integer", "null"] }
+        body: { type: string }
+        readAt: { type: ["string", "null"] }
+        createdAt: { type: string }
+      required: [id, senderId, senderName, senderRole, recipientId, body, readAt, createdAt]
     AuthUser:
       type: object
       properties:

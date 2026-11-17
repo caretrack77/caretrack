@@ -791,6 +791,99 @@ export const ListMessageThreadsResponse = zod.array(ListMessageThreadsResponseIt
 
 
 /**
+ * @summary Patient-conversation messages in a date range, for the calendar view
+ */
+export const ListMessageCalendarQueryParams = zod.object({
+  "from": zod.coerce.date(),
+  "to": zod.coerce.date()
+})
+
+export const ListMessageCalendarResponseItem = zod.object({
+  "id": zod.number().int(),
+  "patientId": zod.number().int(),
+  "patientName": zod.string(),
+  "senderId": zod.number().int().nullable(),
+  "senderName": zod.string(),
+  "senderRole": zod.string(),
+  "body": zod.string(),
+  "createdAt": zod.string()
+})
+export const ListMessageCalendarResponse = zod.array(ListMessageCalendarResponseItem)
+
+
+/**
+ * @summary Admin–doctor conversations for the signed-in admin or doctor (one per colleague)
+ */
+export const ListStaffThreadsResponseItem = zod.object({
+  "userId": zod.number().int(),
+  "name": zod.string(),
+  "role": zod.enum(['admin', 'provider']),
+  "lastMessage": zod.string().nullable(),
+  "lastMessageAt": zod.string().nullable(),
+  "lastFromMe": zod.boolean(),
+  "unreadCount": zod.number().int()
+})
+export const ListStaffThreadsResponse = zod.array(ListStaffThreadsResponseItem)
+
+
+/**
+ * @summary Messages between the signed-in user and one colleague
+ */
+export const ListStaffMessagesParams = zod.object({
+  "userId": zod.coerce.number().int()
+})
+
+export const ListStaffMessagesResponseItem = zod.object({
+  "id": zod.number().int(),
+  "senderId": zod.number().int().nullable(),
+  "senderName": zod.string(),
+  "senderRole": zod.string(),
+  "recipientId": zod.number().int().nullable(),
+  "body": zod.string(),
+  "readAt": zod.string().nullable(),
+  "createdAt": zod.string()
+})
+export const ListStaffMessagesResponse = zod.array(ListStaffMessagesResponseItem)
+
+
+/**
+ * @summary Send a message to a colleague (admin to doctor, or doctor to admin)
+ */
+export const SendStaffMessageParams = zod.object({
+  "userId": zod.coerce.number().int()
+})
+
+export const sendStaffMessageBodyBodyMax = 2000;
+
+
+
+export const SendStaffMessageBody = zod.object({
+  "body": zod.string().min(1).max(sendStaffMessageBodyBodyMax)
+})
+
+export const SendStaffMessageResponse = zod.object({
+  "id": zod.number().int(),
+  "senderId": zod.number().int().nullable(),
+  "senderName": zod.string(),
+  "senderRole": zod.string(),
+  "recipientId": zod.number().int().nullable(),
+  "body": zod.string(),
+  "readAt": zod.string().nullable(),
+  "createdAt": zod.string()
+})
+
+
+/**
+ * @summary Mark a colleague's messages to the signed-in user as read
+ */
+export const MarkStaffMessagesReadParams = zod.object({
+  "userId": zod.coerce.number().int()
+})
+
+export const MarkStaffMessagesReadResponse = zod.void()
+
+
+/**
  * @summary Messages between a patient and their care team
  */
 export const ListPatientMessagesParams = zod.object({

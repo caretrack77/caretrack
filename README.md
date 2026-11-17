@@ -123,9 +123,9 @@ All demo accounts use **`demo1234`** as their password. When two-step login is o
 | Role | Email | Demo scope |
 |---|---|---|
 | Admin | `admin@caretrack.com` | User/team management, all patients, audit activity |
-| Doctor | `doctor@caretrack.com` | Dr. Mira Santos and five assigned patients |
-| Doctor | `doctor2@caretrack.com` | Dr. Joel Reyes and five assigned patients; also covers Dr. Mira Santos's patients in the seed |
-| Patient | `patient@caretrack.com` | Alex Morgan's own schedule and health/adherence views; mobile browser only |
+| Doctor | `doctor@caretrack.com` | Dr. Baltazar, Alessa Mikkah and five assigned patients |
+| Doctor | `doctor2@caretrack.com` | Dr. Idago, Gremory Dennis and two assigned patients; also covers Dr. Baltazar's patients in the seed |
+| Patient | `patient@caretrack.com` | Andrade, Francisca Santiago's own schedule and health/adherence views; mobile browser only |
 | Caregiver | `caregiver@caretrack.com` | Jordan Morgan's linked-patient support; mobile browser only |
 
 The database/API retains the internal role identifier `provider` for doctors. Product-facing roles are Admin, Doctor, Patient, and Caregiver.
@@ -219,16 +219,16 @@ This log records additions reflected in the current source, not items that remai
 
 | Addition | Implementation areas | How to see it |
 |---|---|---|
-| Health metric and symptom recording, ranges, alerts, and seed records | `lib/db/src/schema/caretrack.ts`; `artifacts/api-server/src/routes/health.ts`; `artifacts/api-server/scripts/seed.mjs` | Open the Health page as Alex or a linked caregiver; record a reading and review its range/notification behavior. |
+| Health metric and symptom recording, ranges, alerts, and seed records | `lib/db/src/schema/caretrack.ts`; `artifacts/api-server/src/routes/health.ts`; `artifacts/api-server/scripts/seed.mjs` | Open the Health page as Francisca (patient) or a linked caregiver; record a reading and review its range/notification behavior. |
 | Caregiver-scoped dose and health recording | `artifacts/api-server/src/routes/doses.ts`; `artifacts/api-server/src/lib/patient-access.ts` | Use the caregiver account on a mobile browser and log an allowed dose or health observation. |
 | Guarded Groq chatbot and safe fallback | `artifacts/api-server/src/routes/care.ts`; `.env.example` | Ask CareTrack a supported question; try a restricted/off-topic question and compare the fixed response. |
 | Health-informed Random Forest features and confidence | `artifacts/api-server/src/lib/ml/risk-model.ts`; `artifacts/api-server/src/routes/ai.ts`; generated API packages; `artifacts/caretrack/src/App.tsx` | Open AI risk prediction or a patient risk card and inspect confidence and top factors. |
-| Health and AI evidence in PDF/CSV reports | `artifacts/api-server/src/lib/report-export.ts`; `artifacts/api-server/src/lib/report-service.ts`; seeded report data | Generate/download a weekly report for Alex and inspect health summaries, out-of-range readings, and AI fields where a prediction exists. |
+| Health and AI evidence in PDF/CSV reports | `artifacts/api-server/src/lib/report-export.ts`; `artifacts/api-server/src/lib/report-service.ts`; seeded report data | Generate/download a weekly report for Francisca and inspect health summaries, out-of-range readings, and AI fields where a prediction exists. |
 | Authenticated near-real-time message/notification events | `artifacts/api-server/src/routes/events.ts`; `artifacts/api-server/src/lib/realtime.ts`; `artifacts/api-server/src/routes/messages.ts`; `artifacts/caretrack/src/App.tsx`; `lib/api-spec/openapi.yaml` | Send a message between authorized sessions; observe the recipient update without refreshing. Disconnect the stream to see polling fallback. |
 | Offline schedule reminders and dose synchronization | `artifacts/caretrack/public/sw.js`; `artifacts/caretrack/src/App.tsx`; `docs/evidence/OFFLINE_REALTIME_MANUAL.md` | Follow the offline manual: cache the schedule, disconnect, log a dose, reconnect, and confirm the preserved timestamp syncs. |
 | Medical-history, consultation, prescription, and record-history API routes | `artifacts/api-server/src/routes/clinical.ts`; `artifacts/api-server/src/routes/medications.ts`; `lib/db/src/schema/caretrack.ts` | Exercise documented authenticated routes with an assigned patient; inspect the record-history endpoint as a doctor/admin. Full UI/entity coverage remains incomplete. |
 | Rate limits, privacy consent, security headers, and production-safe OTP behavior | `artifacts/api-server/src/lib/auth.ts`; middleware; `artifacts/api-server/src/lib/security.test.ts`; `.env.example` | Accept the privacy notice on first use; review response headers and rate-limit behavior in a local test deployment. |
-| Native Android app with on-device reminders and bearer-token sign-in | `artifacts/caretrack/android/`; `artifacts/caretrack/capacitor.config.ts`; `artifacts/caretrack/src/native.ts`; `artifacts/caretrack/src/native-notifications.ts`; `artifacts/api-server/src/lib/auth.ts`; `artifacts/api-server/src/app.ts`; `docs/ANDROID.md` | Build and install the APK, sign in as Alex, then put the phone in airplane mode and wait for a scheduled dose reminder with the app closed. |
+| Native Android app with on-device reminders and bearer-token sign-in | `artifacts/caretrack/android/`; `artifacts/caretrack/capacitor.config.ts`; `artifacts/caretrack/src/native.ts`; `artifacts/caretrack/src/native-notifications.ts`; `artifacts/api-server/src/lib/auth.ts`; `artifacts/api-server/src/app.ts`; `docs/ANDROID.md` | Build and install the APK, sign in as Francisca (patient), then put the phone in airplane mode and wait for a scheduled dose reminder with the app closed. |
 | Future-date checks and mobile-only patient/caregiver policy | API date validation and authentication; `artifacts/caretrack/public/manifest.webmanifest` | Try a patient/caregiver session on a physical phone, Android emulator, or browser device emulation; desktop sign-in is intentionally rejected. |
 
 ## Already implemented (verified, not new in this change log)

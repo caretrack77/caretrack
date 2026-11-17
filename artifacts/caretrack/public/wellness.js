@@ -222,7 +222,9 @@
   function render(msg, context) {
     const ctx = context || {};
     const a = ctx.activity || { total: 0, taken: 0, remaining: 0 };
-    const first = String(ctx.name || "").trim().split(/\s+/)[0] || "";
+    // "Last, First Middle" (and "Dr. Last, First") -> "First"; "First Last" -> "First".
+    const full = String(ctx.name || "").trim().replace(/^(dr|nurse)\.?\s+/i, "");
+    const first = (full.includes(",") ? full.slice(full.indexOf(",") + 1) : full).trim().split(/\s+/)[0] || "";
     const body = msg.body
       .replace("{, name}", first ? `, ${first}` : "")
       .replace("{taken}", String(a.taken))

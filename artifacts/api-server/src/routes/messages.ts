@@ -1,6 +1,7 @@
-import { and, asc, desc, eq, gt, inArray, ne, sql } from "drizzle-orm";
+import { and, asc, desc, eq, gt, gte, inArray, lt, ne, sql } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import {
+  ListMessageCalendarQueryParams,
   ListPatientMessagesParams,
   MarkPatientMessagesReadParams,
   SendPatientMessageBody,
@@ -115,6 +116,41 @@ router.get("/messages/threads", async (_req, res): Promise<void> => {
     })
     .sort((a, b) => (b.lastMessageAt ?? "").localeCompare(a.lastMessageAt ?? "") || a.patientName.localeCompare(b.patientName));
   res.json(threads);
+});
+
+/**
+ * Every patient-conversation message the user can see between two dates (inclusive, Manila
+ * calendar days), for the Messages calendar. Same access rules as the threads above.
+ */
+router.get("/messages/calendar", async (req, res): Promise<void> => {
+  const query = ListMessageCalendarQueryParams.safeParse(req.query);
+  if (!query.success) {
+    res.status(400).json({ error: "Choose a valid date range." });
+    return;
+  }
+  const day = (value: string | Date) => (typeof value === "string" ? value : value.toISOString().slice(0, 10));
+  const start = new Date(`${day(query.data.from)}T00:00:00+08:00`);
+  const end = new Date(`${day(query.data.to)}T00:00:00+08:00`);
+  end.setDate(end.getDate() + 1);
+  if (Number.isNaN(start.getTime()) || Number.isNaN(end.getTime()) || end <= start || end.getTime() - start.getTime() > 62 * 86_400_000) {
+    res.status(400).json({ error: "Choose a date range of up to two months." });
+    return;
+  }
+  const user = currentUser(res)!;
+  const patientIds = await getVisiblePatientIds(user);
+  if (patientIds.length === 0) {
+    res.json([]);
+    return;
+  }
+  const rows = await db
+    .select({ message: messagesTable, senderName: usersTable.name, senderRole: usersTable.role, patientName: patientsTable.name })
+    .from(messagesTable)
+    .innerJoin(patientsTable, eq(patientsTable.id, messagesTable.patientId))
+    .leftJoin(usersTable, eq(usersTable.id, messagesTable.senderId))
+    .where(and(inArray(messagesTable.patientId, patientIds), gte(messagesTable.createdAt, start), lt(messagesTable.createdAt, end)))
+    .orderBy(asc(messagesTable.createdAt))
+    .limit(1000);
+  res.json(rows.map((row) => ({ ...serializeMessage(row), patientName: row.patientName })));
 });
 
 router.get("/patients/:id/messages", async (req, res): Promise<void> => {

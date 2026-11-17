@@ -17,6 +17,7 @@ import aiRouter from "./ai";
 import careRouter from "./care";
 import clinicalRouter from "./clinical";
 import eventsRouter from "./events";
+import staffMessagesRouter from "./staff-messages";
 
 const router: IRouter = Router();
 
@@ -38,5 +39,6 @@ router.use(aiRouter);
 router.use(careRouter);
 router.use(clinicalRouter);
 router.use(eventsRouter);
+router.use(staffMessagesRouter);
 
 export default router;
