@@ -63,8 +63,8 @@ Requirements: Node 22+, pnpm, Android Studio (its bundled JDK 21 and Android SDK
 #    CARETRACK_API_URL=https://caretrack.example.com
 # 2. release signing (once): copy android/keystore.properties.example to android/keystore.properties
 #    and point it at your keystore. Keep the keystore safe; updates must be signed with the same key.
-# 3. build
-$env:JAVA_HOME = "C:\Program Files\Android\Android Studio\jbr"
+# 3. build (works on Windows, macOS and Linux; uses Android Studio's bundled Java
+#    automatically when JAVA_HOME isn't set)
 pnpm android:apk
 ```
 

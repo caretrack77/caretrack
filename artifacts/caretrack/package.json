@@ -10,8 +10,8 @@
     "typecheck": "tsc -p tsconfig.json --noEmit",
     "android:sync": "vite build --config vite.config.ts && cap sync android",
     "android:open": "cap open android",
-    "android:apk": "pnpm run android:sync && cd android && gradlew assembleRelease",
-    "android:apk:debug": "pnpm run android:sync && cd android && gradlew assembleDebug"
+    "android:apk": "pnpm run android:sync && node scripts/gradle.mjs assembleRelease",
+    "android:apk:debug": "pnpm run android:sync && node scripts/gradle.mjs assembleDebug"
   },
   "devDependencies": {
     "@capacitor/cli": "^8.6.0",
