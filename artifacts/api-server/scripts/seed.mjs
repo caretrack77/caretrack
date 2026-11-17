@@ -18,7 +18,7 @@ const client = await pool.connect();
 const DEMO_PASSWORD = "demo1234";
 
 const demoUsers = [
-  { key: "admin", name: "Carla Mendoza", email: "admin@caretrack.com", role: "admin", phone: "09170000001" },
+  { key: "admin", name: "Sir Reyes, Ryan Michael Lao", email: "admin@caretrack.com", role: "admin", phone: "09170000001" },
   { key: "provider1", name: "Dr. Baltazar, Alessa Mikkah", email: "doctor@caretrack.com", role: "provider", phone: "09170000002" },
   { key: "provider2", name: "Dr. Idago, Gremory Dennis", email: "doctor2@caretrack.com", role: "provider", phone: "09170000003" },
   { key: "patient", name: "Andrade, Francisca Santiago", email: "patient@caretrack.com", role: "patient", phone: "09170000004" },

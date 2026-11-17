@@ -122,7 +122,7 @@ All demo accounts use **`demo1234`** as their password. When two-step login is o
 
 | Role | Email | Demo scope |
 |---|---|---|
-| Admin | `admin@caretrack.com` | User/team management, all patients, audit activity |
+| Admin | `admin@caretrack.com` | Sir Reyes, Ryan Michael Lao: user/team management, all patients, audit activity |
 | Doctor | `doctor@caretrack.com` | Dr. Baltazar, Alessa Mikkah and five assigned patients |
 | Doctor | `doctor2@caretrack.com` | Dr. Idago, Gremory Dennis and two assigned patients; also covers Dr. Baltazar's patients in the seed |
 | Patient | `patient@caretrack.com` | Andrade, Francisca Santiago's own schedule and health/adherence views; mobile browser only |

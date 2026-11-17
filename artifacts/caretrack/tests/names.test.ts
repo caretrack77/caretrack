@@ -13,6 +13,12 @@ describe("display names", () => {
     expect(initials("Dr. Idago, Gremory Dennis")).toBe("GI");
   });
 
+  it("addresses the administrator by title and last name", () => {
+    expect(splitName("Sir Reyes, Ryan Michael Lao")).toEqual({ title: "Sir", last: "Reyes", first: "Ryan" });
+    expect(shortName("Sir Reyes, Ryan Michael Lao")).toBe("Sir Reyes");
+    expect(initials("Sir Reyes, Ryan Michael Lao")).toBe("RR");
+  });
+
   it("still handles First Last names", () => {
     expect(shortName("Revie Balanag")).toBe("Revie");
     expect(initials("Jordan Morgan")).toBe("JM");
