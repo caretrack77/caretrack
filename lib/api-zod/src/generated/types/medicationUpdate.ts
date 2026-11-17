@@ -32,5 +32,10 @@ export interface MedicationUpdate {
   endDate?: Date | null;
   /** @nullable */
   instructions?: string | null;
+  /**
+     * @maxLength 2000
+     * @nullable
+     */
+  sideEffects?: string | null;
   active?: boolean;
 }

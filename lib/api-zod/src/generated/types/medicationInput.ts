@@ -37,4 +37,6 @@ export interface MedicationInput {
   /** @nullable */
   endDate?: Date | null;
   instructions?: string;
+  /** @maxLength 2000 */
+  sideEffects?: string;
 }

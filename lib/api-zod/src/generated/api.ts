@@ -132,7 +132,7 @@ export const LoginResponse = zod.object({
   "active": zod.boolean(),
   "mustChangePassword": zod.boolean(),
   "privacyConsentAccepted": zod.boolean(),
-  "phoneVerified": zod.boolean().optional()
+  "phoneVerified": zod.boolean().optional().describe('The account\'s current mobile number was confirmed with an SMS code.')
 }),zod.null()])
 })
 
@@ -159,7 +159,7 @@ export const ChangePasswordResponse = zod.object({
   "active": zod.boolean(),
   "mustChangePassword": zod.boolean(),
   "privacyConsentAccepted": zod.boolean(),
-  "phoneVerified": zod.boolean().optional()
+  "phoneVerified": zod.boolean().optional().describe('The account\'s current mobile number was confirmed with an SMS code.')
 })
 
 
@@ -202,7 +202,7 @@ export const VerifyLoginOtpResponse = zod.object({
   "active": zod.boolean(),
   "mustChangePassword": zod.boolean(),
   "privacyConsentAccepted": zod.boolean(),
-  "phoneVerified": zod.boolean().optional()
+  "phoneVerified": zod.boolean().optional().describe('The account\'s current mobile number was confirmed with an SMS code.')
 })
 
 
@@ -217,7 +217,7 @@ export const GetCurrentUserResponse = zod.object({
   "active": zod.boolean(),
   "mustChangePassword": zod.boolean(),
   "privacyConsentAccepted": zod.boolean(),
-  "phoneVerified": zod.boolean().optional()
+  "phoneVerified": zod.boolean().optional().describe('The account\'s current mobile number was confirmed with an SMS code.')
 })
 
 
@@ -254,7 +254,7 @@ export const ListUsersResponseItem = zod.object({
   "active": zod.boolean(),
   "mustChangePassword": zod.boolean(),
   "privacyConsentAccepted": zod.boolean(),
-  "phoneVerified": zod.boolean().optional()
+  "phoneVerified": zod.boolean().optional().describe('The account\'s current mobile number was confirmed with an SMS code.')
 }).and(zod.object({
   "phone": zod.string().nullable(),
   "createdAt": zod.coerce.date()
@@ -288,7 +288,7 @@ export const CreateUserResponse = zod.object({
   "active": zod.boolean(),
   "mustChangePassword": zod.boolean(),
   "privacyConsentAccepted": zod.boolean(),
-  "phoneVerified": zod.boolean().optional()
+  "phoneVerified": zod.boolean().optional().describe('The account\'s current mobile number was confirmed with an SMS code.')
 }).and(zod.object({
   "phone": zod.string().nullable(),
   "createdAt": zod.coerce.date()
@@ -325,7 +325,7 @@ export const UpdateUserResponse = zod.object({
   "active": zod.boolean(),
   "mustChangePassword": zod.boolean(),
   "privacyConsentAccepted": zod.boolean(),
-  "phoneVerified": zod.boolean().optional()
+  "phoneVerified": zod.boolean().optional().describe('The account\'s current mobile number was confirmed with an SMS code.')
 }).and(zod.object({
   "phone": zod.string().nullable(),
   "createdAt": zod.coerce.date()
@@ -438,6 +438,7 @@ export const GetPatientResponse = zod.object({
   "startDate": zod.coerce.date(),
   "endDate": zod.coerce.date().nullable(),
   "instructions": zod.string().nullable(),
+  "sideEffects": zod.string().nullish().describe('Side effects to watch for, as entered by the prescribing doctor.'),
   "prescribedBy": zod.number().int().nullable(),
   "prescribedByName": zod.string().nullish(),
   "active": zod.boolean()
@@ -528,6 +529,7 @@ export const ListMedicationsResponseItem = zod.object({
   "startDate": zod.coerce.date(),
   "endDate": zod.coerce.date().nullable(),
   "instructions": zod.string().nullable(),
+  "sideEffects": zod.string().nullish().describe('Side effects to watch for, as entered by the prescribing doctor.'),
   "prescribedBy": zod.number().int().nullable(),
   "prescribedByName": zod.string().nullish(),
   "active": zod.boolean()
@@ -548,6 +550,8 @@ export const createMedicationBodyDaysOfWeekItemMax = 6;
 
 export const createMedicationBodyIntervalHoursMax = 24;
 
+export const createMedicationBodySideEffectsMax = 2000;
+
 
 
 export const CreateMedicationBody = zod.object({
@@ -562,7 +566,8 @@ export const CreateMedicationBody = zod.object({
   "intervalHours": zod.number().int().min(1).max(createMedicationBodyIntervalHoursMax).nullish(),
   "startDate": zod.coerce.date(),
   "endDate": zod.coerce.date().nullish(),
-  "instructions": zod.string().optional()
+  "instructions": zod.string().optional(),
+  "sideEffects": zod.string().max(createMedicationBodySideEffectsMax).optional()
 })
 
 export const createMedicationResponseDaysOfWeekItemMin = 0;
@@ -584,6 +589,7 @@ export const CreateMedicationResponse = zod.object({
   "startDate": zod.coerce.date(),
   "endDate": zod.coerce.date().nullable(),
   "instructions": zod.string().nullable(),
+  "sideEffects": zod.string().nullish().describe('Side effects to watch for, as entered by the prescribing doctor.'),
   "prescribedBy": zod.number().int().nullable(),
   "prescribedByName": zod.string().nullish(),
   "active": zod.boolean()
@@ -604,6 +610,8 @@ export const updateMedicationBodyTimesPerDayMax = 24;
 export const updateMedicationBodyDaysOfWeekItemMin = 0;
 export const updateMedicationBodyDaysOfWeekItemMax = 6;
 
+export const updateMedicationBodySideEffectsMax = 2000;
+
 
 
 export const UpdateMedicationBody = zod.object({
@@ -618,6 +626,7 @@ export const UpdateMedicationBody = zod.object({
   "startDate": zod.coerce.date().optional(),
   "endDate": zod.coerce.date().nullish(),
   "instructions": zod.string().nullish(),
+  "sideEffects": zod.string().max(updateMedicationBodySideEffectsMax).nullish(),
   "active": zod.boolean().optional()
 })
 
@@ -640,6 +649,7 @@ export const UpdateMedicationResponse = zod.object({
   "startDate": zod.coerce.date(),
   "endDate": zod.coerce.date().nullable(),
   "instructions": zod.string().nullable(),
+  "sideEffects": zod.string().nullish().describe('Side effects to watch for, as entered by the prescribing doctor.'),
   "prescribedBy": zod.number().int().nullable(),
   "prescribedByName": zod.string().nullish(),
   "active": zod.boolean()
@@ -1381,6 +1391,13 @@ export const ListNotificationsResponseItem = zod.object({
   "createdAt": zod.coerce.date()
 })
 export const ListNotificationsResponse = zod.array(ListNotificationsResponseItem)
+
+
+/**
+ * Server-Sent Events stream. The existing session cookie authenticates and authorizes the stream.
+ * @summary Subscribe to authenticated message and notification updates
+ */
+export const EventsResponse = zod.unknown()
 
 
 /**

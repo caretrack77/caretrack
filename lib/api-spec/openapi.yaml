@@ -1712,6 +1712,7 @@ components:
         startDate: { type: string, format: date }
         endDate: { type: ["string", "null"], format: date }
         instructions: { type: ["string", "null"] }
+        sideEffects: { type: ["string", "null"], description: "Side effects to watch for, as entered by the prescribing doctor." }
         prescribedBy: { type: ["integer", "null"] }
         prescribedByName: { type: ["string", "null"] }
         active: { type: boolean }
@@ -1731,6 +1732,7 @@ components:
         startDate: { type: string, format: date }
         endDate: { type: ["string", "null"], format: date }
         instructions: { type: string }
+        sideEffects: { type: string, maxLength: 2000 }
       required: [patientId, name, dosage, form, frequency, timesPerDay, scheduleTimes, daysOfWeek, startDate]
     MedicationUpdate:
       type: object
@@ -1746,6 +1748,7 @@ components:
         startDate: { type: string, format: date }
         endDate: { type: ["string", "null"], format: date }
         instructions: { type: ["string", "null"] }
+        sideEffects: { type: ["string", "null"], maxLength: 2000 }
         active: { type: boolean }
     Dose:
       type: object

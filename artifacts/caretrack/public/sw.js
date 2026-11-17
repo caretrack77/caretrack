@@ -108,6 +108,9 @@ function scheduleCachedReminders(doses) {
       await self.registration.showNotification(`CareTrack dose reminder: ${dose.medicationName}`, {
         body: `${dose.dosage || "Dose"} is due now.`,
         tag: `dose-${dose.id}`, icon: "/icon-192.png", badge: "/icon-192.png",
+        // Not silent: the phone plays its notification sound and vibrates. It stays until
+        // the person taps or swipes it away, so a reminder isn't missed.
+        silent: false, vibrate: [200, 100, 200], requireInteraction: true,
         data: { url: "/today", doseId: dose.id },
       });
     }, Math.min(delay, 2147483647));

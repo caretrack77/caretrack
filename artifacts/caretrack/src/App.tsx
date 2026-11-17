@@ -1,4 +1,5 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
+import { createPortal } from 'react-dom';
 import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
 import { Link, Redirect, Route, Switch, useLocation, useParams } from 'wouter';
 import {
@@ -23,6 +24,7 @@ import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieCh
 import { builtInServerUrl, clearNativeSession, getServerUrl, isNativeApp, normalizeServerUrl, openProtectedFile, saveServerUrl, streamServerEvents, testServer } from './native';
 import { clearNativeNotifications, exactAlarmsAllowed, notificationPermission, openExactAlarmSettings, previewNativeWellness, requestNotificationPermission, syncNativeDoseReminders, syncNativeWellness } from './native-notifications';
 import { clearSavedData, discardChange, getSyncSnapshot, keepMine, onSyncComplete, retryAll, subscribeSync, syncErrorOf, syncStateOf, unsyncedCount, type SyncState } from './offline';
+import { clock12, dateTimeLabel, parseClockList, timeLabel } from './time-format';
 import './index.css';
 
 // networkMode 'always': without it React Query pauses every query and save while the browser
@@ -37,10 +39,6 @@ const dateTimeNow = () => {
   const now = new Date();
   const offset = now.getTimezoneOffset() * 60_000;
   return new Date(now.getTime() - offset).toISOString().slice(0, 16);
-};
-const timeLabel = (value: string) => {
-  const d = new Date(value);
-  return Number.isNaN(d.getTime()) ? value : d.toLocaleTimeString([], { hour: 'numeric', minute: '2-digit' });
 };
 /** The server's error message from a failed API call, or a fallback. */
 const apiError = (err: unknown, fallback: string) => {
@@ -216,7 +214,8 @@ function AuthenticatedApp() {
       window.alert('You’re offline. Signing out of the website needs an internet connection. Please try again when you’re connected.');
     } });
   };
-  const [mobileNav,setMobileNav]=useState(false);
+  const [mobileNav,setMobileNav]=useState(false),[helpOpen,setHelpOpen]=useState(false);
+  const doseAlerts=useDoseDueAlerts(user??({id:0,role:'admin'} as AuthUser),ready);
   // Android back button closes the menu first (see native.ts).
   useEffect(()=>{const close=()=>setMobileNav(false);window.addEventListener('caretrack-close-nav',close);return()=>window.removeEventListener('caretrack-close-nav',close)},[]);
   if (noServer) return <LoginRedirect/>;
@@ -240,14 +239,18 @@ function AuthenticatedApp() {
     </aside>
     {mobileNav&&<div data-mobile-nav-open className="fixed inset-0 z-50 bg-[#102e39]/45 lg:hidden" onClick={()=>setMobileNav(false)}><div className="sidebar-scroll flex h-full w-[280px] flex-col overflow-y-auto bg-[#174353] p-5 text-white" onClick={e=>e.stopPropagation()}><div className="flex items-center justify-between"><Brand light/><button data-testid="button-close-navigation" aria-label="Close menu" onClick={()=>setMobileNav(false)} className="rounded-lg p-2"><X size={18}/></button></div><nav className="mt-8 space-y-1">{navItems.filter(n=>n.roles.includes(user.role)).map(({href,label,icon:Icon})=><Link key={href} href={href} onClick={()=>setMobileNav(false)} data-testid={`mobile-link-${href.slice(1).replace('/','-')}`} className="flex items-center gap-3 rounded-xl px-3 py-3 text-sm text-white/75 hover:bg-white/10"><Icon size={18}/>{label}{href==='/messages'&&unreadMessages>0&&<span className="ml-auto rounded-full bg-[#74d9c5] px-1.5 text-[10px] font-bold text-[#123f4d]">{unreadMessages}</span>}</Link>)}</nav><button data-testid="button-logout-mobile" onClick={()=>signOut()} className="mt-8 flex items-center gap-3 px-3 py-3 text-sm text-white/70"><LogOut size={17}/>Sign out</button></div></div>}
     <div className="lg:pl-[252px]">
-      <header className="sticky top-0 z-30 flex h-[68px] items-center justify-between border-b border-[#dfebeb] bg-[#f7fbfb]/95 px-4 backdrop-blur sm:px-8">
+      <header className="app-header sticky top-0 z-30 flex h-[68px] items-center justify-between border-b border-[#dfebeb] bg-[#f7fbfb]/95 px-4 backdrop-blur sm:px-8">
         <button data-testid="button-open-navigation" aria-label="Open menu" onClick={()=>setMobileNav(true)} className="rounded-lg p-2 text-[#42616c] lg:hidden"><Menu size={21}/></button>
         <div className="hidden text-sm text-[#67818a] sm:block">Care, made clearer <span className="mx-2 text-[#a5b7bb]">/</span><span className="font-semibold text-[#254a57]">{navItems.find(x=>x.href===pathTitle)?.label||'Patient details'}</span></div>
-        <div className="ml-auto flex items-center gap-3"><div className="hidden items-center gap-2 rounded-full border border-[#d9e8e8] bg-white px-3 py-1.5 text-xs text-[#67818a] sm:flex"><span className="h-2 w-2 rounded-full bg-[#4cb7a3]"/>{new Date().toLocaleDateString(undefined,{weekday:'short',month:'short',day:'numeric'})}</div><SyncChip/><NotificationBell user={user} readOnly={user.role==='caregiver'}/><button data-testid="button-help" title="CareTrack demo help" className="grid h-9 w-9 place-items-center rounded-full border border-[#dce8e9] bg-white text-[#587680] hover:bg-[#f0f7f7]"><CircleHelp size={17}/></button><Avatar name={user.name} small/></div>
+        {/* Today's date and the connection status are information only (no border or hover, so
+            they don't look like buttons). The bell, help and profile picture are buttons. */}
+        <div className="ml-auto flex items-center gap-2 sm:gap-3"><div data-testid="text-today-date" className="hidden cursor-default select-none items-center gap-1.5 px-1 text-xs font-medium text-[#67818a] md:flex"><CalendarDays size={14} aria-hidden="true"/>{new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</div><SyncChip/><NotificationBell user={user} readOnly={user.role==='caregiver'}/><button data-testid="button-help" aria-label="Help" title="Help" onClick={()=>setHelpOpen(true)} className="grid h-9 w-9 place-items-center rounded-full border border-[#dce8e9] bg-white text-[#587680] transition hover:bg-[#f0f7f7]"><CircleHelp size={17}/></button><Link href="/account" data-testid="link-profile" aria-label={`My account (${user.name})`} title="My account" className="rounded-full ring-offset-2 transition hover:ring-2 hover:ring-[#9fcfc9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#17647a]"><Avatar name={user.name} small/></Link></div>
       </header>
       <SyncBanner/>
       <WellnessNotifications user={user}/>
-      <main className="mx-auto max-w-[1450px] px-4 py-6 sm:px-8 sm:py-8">
+      <DueDoseAlert due={doseAlerts.due} onDismiss={doseAlerts.dismiss} role={user.role}/>
+      {helpOpen&&<HelpDialog user={user} onClose={()=>setHelpOpen(false)}/>}
+      <main className={`mx-auto max-w-[1450px] px-4 py-6 sm:px-8 sm:py-8 ${user.role==='patient'||user.role==='caregiver'?'pb-24 sm:pb-24':''}`}>
         <Switch>
           <Route path="/dashboard"><RoleGate user={user} allowed={['admin','provider','caregiver']}><Dashboard user={user}/></RoleGate></Route>
           <Route path="/today"><TodayPage user={user}/></Route>
@@ -327,15 +330,41 @@ function StatusPill({status}:{status:string}){const styles:Record<string,string>
 function NotificationBell({user,readOnly}:{user:AuthUser;readOnly:boolean}){
   const query=useListNotifications({query:{queryKey:getListNotificationsQueryKey(),refetchInterval:30_000}}),mark=useMarkNotificationRead(),qc=useQueryClient(),[open,setOpen]=useState(false);
   const notifications=query.data||[],unread=notifications.filter(n=>!n.read).length;
-  useNotificationAlerts(notifications);
+  useNotificationAlerts(notifications,user);
   const [,go]=useLocation();
-  const read=(item:Notification)=>{if(item.kind==='reminder'||item.kind==='overdue'){setOpen(false);go('/today')}else if(item.kind==='ai-risk'&&item.patientId){setOpen(false);go(`/patients/${item.patientId}`)}else if(item.kind==='appointment'){setOpen(false);go('/appointments')}else if(item.kind==='prescription'){setOpen(false);go('/prescriptions')}else if(item.kind==='message'){setOpen(false);go(item.patientId?`/messages?patient=${item.patientId}`:'/messages')}if(item.read||readOnly)return;mark.mutate({id:item.id},{onSuccess:()=>qc.invalidateQueries({queryKey:getListNotificationsQueryKey()})})};
+  const [shown,setShown]=useState(10),[settings,setSettings]=useState(false);
+  // Close with Escape, and when the Android back button closes the menu.
+  useEffect(()=>{if(!open)return;const key=(e:KeyboardEvent)=>{if(e.key==='Escape')setOpen(false)};const close=()=>setOpen(false);window.addEventListener('keydown',key);window.addEventListener('caretrack-close-nav',close);return()=>{window.removeEventListener('keydown',key);window.removeEventListener('caretrack-close-nav',close)}},[open]);
+  const refresh=()=>qc.invalidateQueries({queryKey:getListNotificationsQueryKey()});
+  const read=(item:Notification)=>{if(item.kind==='reminder'||item.kind==='overdue'){setOpen(false);go('/today')}else if((item.kind==='ai-risk'||item.kind==='risk'||item.kind==='lab')&&item.patientId&&user.role!=='patient'&&user.role!=='caregiver'){setOpen(false);go(`/patients/${item.patientId}`)}else if(item.kind==='lab'){setOpen(false);go('/today')}else if(item.kind==='appointment'){setOpen(false);go('/appointments')}else if(item.kind==='prescription'){setOpen(false);go('/prescriptions')}else if(item.kind==='message'){setOpen(false);go(item.patientId?`/messages?patient=${item.patientId}`:'/messages')}if(item.read||readOnly)return;mark.mutate({id:item.id},{onSuccess:refresh})};
+  const markAll=()=>{const ids=notifications.filter(n=>!n.read).map(n=>n.id);void Promise.all(ids.map(id=>mark.mutateAsync({id}).catch(()=>null))).then(refresh)};
+  const KIND:Record<string,{label:string;icon:typeof Bell;tone:string}>={
+    reminder:{label:'Dose due',icon:Pill,tone:'bg-[#fbf1df] text-[#99702f]'},
+    overdue:{label:'Missed dose',icon:Clock3,tone:'bg-[#fff0eb] text-[#ad5b45]'},
+    message:{label:'Message',icon:MessageSquare,tone:'bg-[#e9f2f6] text-[#366a7d]'},
+    appointment:{label:'Check-up',icon:CalendarDays,tone:'bg-[#e9f2f6] text-[#366a7d]'},
+    prescription:{label:'Prescription',icon:FileText,tone:'bg-[#e5f5ee] text-[#28745a]'},
+    lab:{label:'Lab result',icon:FileText,tone:'bg-[#e5f5ee] text-[#28745a]'},
+    'ai-risk':{label:'Risk alert',icon:Activity,tone:'bg-[#fff0eb] text-[#ad5b45]'},
+    risk:{label:'Adherence alert',icon:Activity,tone:'bg-[#fff0eb] text-[#ad5b45]'},
+  };
+  const when=(value:string)=>{const d=new Date(value);return d.toLocaleDateString('en-CA')===dateToday()?`Today, ${timeLabel(value)}`:dateTimeLabel(value)};
   return <div className="relative">
-    <button data-testid="button-open-notifications" aria-label={`Notifications${unread?`, ${unread} unread`:''}`} aria-expanded={open} onClick={()=>setOpen(!open)} className="relative grid h-9 w-9 place-items-center rounded-full border border-[#dce8e9] bg-white text-[#587680] transition hover:bg-[#f0f7f7]"><Bell size={16}/>{unread>0&&<span data-testid="status-unread-notifications" className="absolute -right-1 -top-1 grid h-[17px] min-w-[17px] place-items-center rounded-full bg-[#d9755e] px-1 text-[9px] font-bold text-white">{unread>9?'9+':unread}</span>}</button>
-    {open&&<div data-testid="panel-notifications" className="absolute right-0 top-12 z-50 w-[min(360px,calc(100vw-2rem))] overflow-hidden rounded-2xl border border-[#dce8e8] bg-white shadow-[0_18px_45px_rgba(22,62,76,.16)]">
-      <div className="flex items-center justify-between border-b border-[#edf2f2] px-4 py-3"><div><div className="text-sm font-bold text-[#254954]">Notifications</div><div className="text-[11px] text-[#81969b]">{unread?`${unread} unread`:'You’re all caught up'}</div></div><button data-testid="button-close-notifications" onClick={()=>setOpen(false)} className="rounded-lg p-1.5 text-[#789096] hover:bg-[#f2f7f7]"><X size={16}/></button></div>
-      <SoundSettings user={user}/>{query.isLoading?<div data-testid="status-notifications-loading" className="space-y-2 p-4"><div className="h-12 animate-pulse rounded-xl bg-[#eff5f5]"/><div className="h-12 animate-pulse rounded-xl bg-[#eff5f5]"/></div>:query.isError?<div data-testid="status-notifications-error" className="p-4 text-xs text-[#a55348]">Notifications couldn’t be loaded. <button data-testid="button-retry-notifications" onClick={()=>query.refetch()} className="font-semibold underline">Try again</button></div>:notifications.length===0?<div data-testid="state-notifications-empty" className="p-6 text-center"><div className="text-sm font-semibold text-[#45636c]">Nothing new</div><div className="mt-1 text-xs text-[#8aa0a4]">Updates from your care team will appear here.</div></div>:<div className="max-h-[360px] divide-y divide-[#edf2f2] overflow-y-auto">{notifications.slice(0,8).map(n=><button key={n.id} data-testid={`notification-item-${n.id}`} onClick={()=>read(n)} disabled={mark.isPending} className={`block w-full px-4 py-3 text-left transition hover:bg-[#f6faf9] ${n.read?'':'bg-[#f1f8f6]'}`}><div className="flex items-start gap-2.5"><span className={`mt-1.5 h-2 w-2 shrink-0 rounded-full ${n.read?'bg-transparent':'bg-[#42ad99]'}`}/><span className="min-w-0 flex-1"><span className="flex items-center justify-between gap-2"><span className="text-xs font-bold text-[#355661]" data-testid={`text-notification-title-${n.id}`}>{n.title}</span><span className="shrink-0 text-[10px] text-[#96a8ac]">{new Date(n.createdAt).toLocaleDateString()}</span></span><span className="mt-1 block text-xs leading-5 text-[#71888e]">{n.message}</span></span></div></button>)}</div>}
-    </div>}
+    <button data-testid="button-open-notifications" aria-label={`Notifications${unread?`, ${unread} unread`:''}`} aria-expanded={open} aria-haspopup="dialog" onClick={()=>setOpen(!open)} className="relative grid h-9 w-9 place-items-center rounded-full border border-[#dce8e9] bg-white text-[#587680] transition hover:bg-[#f0f7f7]"><Bell size={16}/>{unread>0&&<span data-testid="status-unread-notifications" className="absolute -right-1 -top-1 grid h-[17px] min-w-[17px] place-items-center rounded-full bg-[#d9755e] px-1 text-[9px] font-bold text-white">{unread>9?'9+':unread}</span>}</button>
+    {/* Rendered on <body>: the header's blur effect would otherwise trap the panel inside it. */}
+    {open&&createPortal(<>
+      {/* Tap outside to close. On phones it also dims the page so the panel reads clearly. */}
+      <div data-testid="backdrop-notifications" aria-hidden="true" onClick={()=>setOpen(false)} className="fixed inset-0 z-50 bg-[#102e39]/25 sm:bg-transparent"/>
+      {/* Phones: a full-width sheet under the header (it used to hang off the left edge).
+          Larger screens: a dropdown under the bell. Its height always fits the screen, so in
+          landscape the list scrolls inside the panel and the page stays usable. */}
+      <div data-testid="panel-notifications" role="dialog" aria-label="Notifications" className="notif-panel fixed inset-x-3 top-[76px] z-[55] flex max-h-[calc(100dvh-92px)] flex-col overflow-hidden rounded-2xl border border-[#dce8e8] bg-white shadow-[0_18px_45px_rgba(22,62,76,.18)] sm:inset-x-auto sm:right-6 sm:top-[62px] sm:w-[390px] sm:max-h-[min(560px,calc(100dvh-80px))] lg:right-8">
+        <div className="notif-head flex shrink-0 items-center justify-between gap-2 border-b border-[#edf2f2] px-4 py-3"><div className="min-w-0"><div className="text-sm font-bold text-[#254954]">Notifications</div><div className="text-[11px] text-[#81969b]">{unread?`${unread} unread`:'You’re all caught up'}</div></div><div className="flex items-center gap-1">{unread>0&&!readOnly&&<button data-testid="button-mark-all-read" onClick={markAll} disabled={mark.isPending} className="rounded-lg px-2 py-1.5 text-[11px] font-semibold text-[#287d80] hover:bg-[#eef8f6] disabled:opacity-50">Mark all read</button>}<button data-testid="button-notification-settings" aria-expanded={settings} onClick={()=>setSettings(!settings)} className={`rounded-lg px-2 py-1.5 text-[11px] font-semibold hover:bg-[#f2f7f7] ${settings?'bg-[#eef8f6] text-[#287d80]':'text-[#5d7f86]'}`}>Sound &amp; alerts</button><button data-testid="button-close-notifications" aria-label="Close notifications" onClick={()=>setOpen(false)} className="grid h-9 w-9 place-items-center rounded-lg text-[#789096] hover:bg-[#f2f7f7]"><X size={17}/></button></div></div>
+        {settings&&<div className="shrink-0"><SoundSettings user={user}/></div>}
+        <div className="min-h-0 flex-1 overflow-y-auto overscroll-contain">{query.isLoading?<div data-testid="status-notifications-loading" className="space-y-2 p-4"><div className="h-12 animate-pulse rounded-xl bg-[#eff5f5]"/><div className="h-12 animate-pulse rounded-xl bg-[#eff5f5]"/></div>:query.isError?<div data-testid="status-notifications-error" className="p-4 text-xs text-[#a55348]">Notifications couldn’t be loaded. <button data-testid="button-retry-notifications" onClick={()=>query.refetch()} className="font-semibold underline">Try again</button></div>:notifications.length===0?<div data-testid="state-notifications-empty" className="p-6 text-center"><div className="text-sm font-semibold text-[#45636c]">Nothing new</div><div className="mt-1 text-xs text-[#8aa0a4]">{user.role==='patient'?'Dose reminders and updates from your care team will appear here.':'Updates from your care team will appear here.'}</div></div>:<div className="divide-y divide-[#edf2f2]">{notifications.slice(0,shown).map(n=>{const k=KIND[n.kind]||{label:'Update',icon:Bell,tone:'bg-[#eef5f5] text-[#54747a]'};const Icon=k.icon;return <button key={n.id} data-testid={`notification-item-${n.id}`} onClick={()=>read(n)} className={`notif-item block w-full px-4 py-3 text-left transition hover:bg-[#f6faf9] ${n.read?'':'bg-[#f1f8f6]'}`}><div className="flex items-start gap-3"><span className={`grid h-8 w-8 shrink-0 place-items-center rounded-lg ${k.tone}`}><Icon size={15}/></span><span className="min-w-0 flex-1"><span className="flex flex-wrap items-center gap-x-2 gap-y-0.5"><span className={`text-[10px] font-bold uppercase tracking-wider ${k.tone.split(' ')[1]}`}>{k.label}</span>{!n.read&&<span className="h-1.5 w-1.5 rounded-full bg-[#42ad99]" aria-label="Unread"/>}<span className="ml-auto text-[10px] text-[#8fa2a6]">{when(n.createdAt)}</span></span><span className="mt-0.5 block break-words text-[13px] font-bold leading-5 text-[#355661]" data-testid={`text-notification-title-${n.id}`}>{n.title}</span><span className="mt-0.5 block whitespace-pre-line break-words text-xs leading-5 text-[#5f7a80]" data-testid={`text-notification-message-${n.id}`}>{n.message}</span></span></div></button>})}
+          {notifications.length>shown&&<button data-testid="button-more-notifications" onClick={()=>setShown(shown+15)} className="block w-full px-4 py-3 text-center text-xs font-semibold text-[#287d80] hover:bg-[#f6faf9]">Show older notifications ({notifications.length-shown})</button>}</div>}</div>
+      </div>
+    </>,document.body)}
   </div>;
 }
 
@@ -362,7 +391,7 @@ function Dashboard({user}:{user:AuthUser}){
       </div>
       <div className="mt-6 grid gap-5 xl:grid-cols-[1.35fr_.85fr]">
         <Card><div className="flex items-center justify-between border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><div><h2 className="font-bold text-[#254954]">Today’s schedule</h2><p className="mt-1 text-xs text-[#80969c]">A shared view of doses due today</p></div><Link href="/today" data-testid="link-view-today" className="flex items-center gap-1 text-xs font-semibold text-[#287f83] hover:underline">View all <ArrowRight size={14}/></Link></div>
-           {doseList.length===0?<EmptyState title="A clear start to the day" body="There are no doses scheduled for today yet. Active medication schedules will appear here."/>:<div className="divide-y divide-[#edf2f2]">{doseList.slice(0,6).map(d=><DoseRow key={d.id} dose={d} patientName={patientList.find(p=>p.id===d.patientId)?.name} compact readOnly={user.role==='caregiver'} role={user.role}/>)}</div>}
+           {doseList.length===0?<EmptyState title="A clear start to the day" body="There are no doses scheduled for today yet. Active medication schedules will appear here."/>:<div className="divide-y divide-[#edf2f2]">{doseList.slice(0,6).map(d=><DoseRow key={d.id} dose={d} patientName={patientList.find(p=>p.id===d.patientId)?.name} compact readOnly={user.role!=='patient'} role={user.role}/>)}</div>}
         </Card>
         <Card><div className="flex items-center justify-between border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><div><h2 className="font-bold text-[#254954]">Assigned patients</h2><p className="mt-1 text-xs text-[#80969c]">Your active care relationships</p></div><Link href="/patients" data-testid="link-view-patients" className="grid h-8 w-8 place-items-center rounded-lg text-[#60818b] hover:bg-[#f1f7f7]"><ArrowRight size={16}/></Link></div>
           {!patientList.length?<EmptyState title="No patients assigned yet" body="New patient profiles assigned to your care will appear here." icon={Users}/>:<div className="divide-y divide-[#edf2f2]">{patientList.slice(0,5).map(p=><Link href={`/patients/${p.id}`} key={p.id} data-testid={`row-dashboard-patient-${p.id}`} className="flex items-center gap-3 px-5 py-4 transition hover:bg-[#f8fbfb] sm:px-6"><Avatar name={p.name} small/><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-[#31535e]">{p.name}</div><div className="mt-1 truncate text-xs text-[#81969b]">{p.age} years · {p.conditions?.[0]||'Care plan in progress'}</div></div><ArrowRight size={15} className="text-[#9aafb2]"/></Link>)}</div>}
@@ -377,8 +406,10 @@ function SkeletonGrid(){return <div className="space-y-5" data-testid="status-lo
 
 /** Patients can log or correct a dose until 24 hours after it was due, and up to 2 hours early. */
 const DOSE_CORRECTION_WINDOW_MS=24*60*60*1000, DOSE_EARLY_WINDOW_MS=2*60*60*1000;
-function DoseRow({dose,patientName,compact=false,readOnly=false,role}:{dose:Dose;patientName?:string;compact?:boolean;readOnly?:boolean;role?:string}){
+function DoseRow({dose,patientName,compact=false,readOnly:readOnlyProp=false,role}:{dose:Dose;patientName?:string;compact?:boolean;readOnly?:boolean;role?:string}){
   const update=useUpdateDoseStatus(), qc=useQueryClient();
+  // Only the patient logs their own doses; the server enforces the same rule.
+  const readOnly=readOnlyProp||role!=='patient';
   const [flash,setFlash]=useState('');
   // Without a connection the change is saved on this device and uploaded later (offline.ts).
   const change=(status:'taken'|'missed'|'skipped'|'scheduled')=>update.mutate({id:dose.id,data:{status}},{onSuccess:(d)=>{qc.invalidateQueries({queryKey:getListDosesQueryKey()});qc.invalidateQueries({queryKey:getGetAnalyticsQueryKey()});qc.invalidateQueries({predicate:q=>String(q.queryKey[0]).includes('medication-progress')});const local=!!syncStateOf(d);setFlash(local?'Saved on this device. It will upload automatically when you’re back online.':status==='taken'?`Marked as taken at ${timeLabel(d.takenTime||new Date().toISOString())}`:status==='scheduled'?'Undone. This dose is waiting for you again.':`Marked as ${status}.`);setTimeout(()=>setFlash(''),local?6000:4000)}});
@@ -418,36 +449,23 @@ function TodayPage({user}:{user:AuthUser}){
   const [filter,setFilter]=useState('all');
   const shown=filtered.filter(d=>filter==='all'||d.status===filter);
   const counts={all:filtered.length,scheduled:filtered.filter(d=>d.status==='scheduled').length,taken:filtered.filter(d=>d.status==='taken').length};
+  // Today's reminders (sound, banner, phone alarms) run app-wide in useDoseDueAlerts. A future
+  // day picked here only adds that day's phone alarms on Android.
   useEffect(() => {
-    if (!doses.data) return;
-    if (isNativeApp) {
-      // Android app: real phone alarms (work offline and with the app closed), plus today's
-      // activity for personalized wellness tips.
-      if (selectedDate === dateToday()) { latestDoses = doses.data; window.dispatchEvent(new Event('caretrack-doses')); }
-      void syncNativeDoseReminders(doses.data);
-      return;
-    }
-    navigator.serviceWorker?.ready.then((registration) => registration.active?.postMessage({ type: 'cache-dose-schedule', doses: doses.data }));
+    if (isNativeApp && doses.data && selectedDate !== dateToday()) void syncNativeDoseReminders(doses.data);
   }, [doses.data, selectedDate]);
-  useEffect(() => {
-    const alarm = () => {
-      const due = (doses.data || []).find((dose) => dose.status === 'scheduled' && Math.abs(new Date(dose.scheduledTime).getTime() - Date.now()) < 30_000);
-      if (due) playChime();
-    };
-    const timer = window.setInterval(alarm, 30_000);
-    alarm();
-    return () => window.clearInterval(timer);
-  }, [doses.data]);
+  const viewOnly=user.role!=='patient';
   return <div className="page-enter">
     <PageHeading eyebrow="Daily routine" title="Today’s doses" description="A clear, reassuring view of what’s planned and what’s already been logged." action={<label className="flex h-10 items-center gap-2 rounded-xl border border-[#dbe7e7] bg-white px-3 text-sm text-[#58747d]"><CalendarDays size={16}/><input data-testid="input-dose-date" type="date" min={dateToday()} value={selectedDate} onChange={e=>{if(e.target.value>=dateToday())setSelectedDate(e.target.value)}} className="w-[125px] bg-transparent text-xs outline-none"/></label>}/>
     {(user.role==='patient'||user.role==='caregiver')&&<PatientAdherenceStats patientId={(patients.data||[])[0]?.id}/>}
     {(user.role==='patient'||user.role==='caregiver')&&(patients.data||[])[0]&&<MyCarePlan patientId={(patients.data||[])[0].id}/>}
     {(user.role==='patient'||user.role==='caregiver')&&(patients.data||[])[0]&&<div className="mb-5"><MedicationProgressPanel patientId={(patients.data||[])[0].id} canAdd={false} patientFacing={user.role==='patient'}/></div>}
-    <Card className="mb-5 overflow-hidden"><div className="flex flex-col gap-4 bg-gradient-to-r from-[#eaf6f3] to-[#f4f9f9] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-7"><div><div className="text-xs font-bold uppercase tracking-[.14em] text-[#478d88]">{selectedDate===dateToday()?'Your day, at a glance':'Selected day'}</div><h2 className="mt-1 text-xl font-bold text-[#274e58]">{filtered.filter(d=>d.status==='taken').length} of {filtered.length} doses logged</h2><p className="mt-1 text-xs text-[#789397]">Every small step counts. You can update a dose whenever you’re ready.</p></div><div className="flex h-14 w-14 items-center justify-center rounded-full border-[5px] border-[#c7e9df] bg-white text-sm font-extrabold text-[#378c7d]">{filtered.length?Math.round(filtered.filter(d=>d.status==='taken').length/filtered.length*100):0}%</div></div></Card>
+    <Card className="mb-5 overflow-hidden"><div className="flex flex-col gap-4 bg-gradient-to-r from-[#eaf6f3] to-[#f4f9f9] px-5 py-5 sm:flex-row sm:items-center sm:justify-between sm:px-7"><div><div className="text-xs font-bold uppercase tracking-[.14em] text-[#478d88]">{selectedDate===dateToday()?'Your day, at a glance':'Selected day'}</div><h2 className="mt-1 text-xl font-bold text-[#274e58]">{filtered.filter(d=>d.status==='taken').length} of {filtered.length} doses logged</h2><p className="mt-1 text-xs text-[#789397]">{viewOnly?'View only. The patient marks each dose as taken, taken late or missed.':'Every small step counts. You can update a dose whenever you’re ready.'}</p></div><div className="flex h-14 w-14 items-center justify-center rounded-full border-[5px] border-[#c7e9df] bg-white text-sm font-extrabold text-[#378c7d]">{filtered.length?Math.round(filtered.filter(d=>d.status==='taken').length/filtered.length*100):0}%</div></div></Card>
     <Card>
       <div className="flex flex-wrap items-center justify-between gap-3 border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><div><h2 className="font-bold text-[#254954]">Dose list</h2><p className="mt-1 text-xs text-[#81969b]">{filtered.length} scheduled item{filtered.length===1?'':'s'}</p></div><div className="flex gap-1 rounded-xl bg-[#f1f6f6] p-1">{[['all','All',counts.all],['scheduled','To do',counts.scheduled],['taken','Logged',counts.taken]].map(([id,label,count])=><button key={id} data-testid={`button-dose-filter-${id}`} onClick={()=>setFilter(String(id))} className={`rounded-lg px-3 py-2 text-xs font-semibold transition ${filter===id?'bg-white text-[#285d69] shadow-sm':'text-[#81969b] hover:text-[#365963]'}`}>{label} <span className="ml-1 text-[10px] opacity-65">{count}</span></button>)}</div></div>
-      {doses.isLoading?<div className="space-y-3 p-5" data-testid="status-loading">{[1,2,3].map(x=><div key={x} className="h-16 animate-pulse rounded-xl bg-[#f2f6f6]"/>)}</div>:doses.isError?<ErrorState retry={()=>doses.refetch()}/>:shown.length===0?<EmptyState title={filter==='all'?'No doses on this day':'Nothing in this view'} body={filter==='all'?'When a medication schedule is active, its planned doses will be shown here.':'Try another view to see more of the day.'}/>:<div className="divide-y divide-[#edf2f2]">{shown.map(d=><DoseRow key={d.id} dose={d} patientName={(patients.data||[]).find(p=>p.id===d.patientId)?.name} readOnly={user.role==='caregiver'} role={user.role}/>)}</div>}
+      {doses.isLoading?<div className="space-y-3 p-5" data-testid="status-loading">{[1,2,3].map(x=><div key={x} className="h-16 animate-pulse rounded-xl bg-[#f2f6f6]"/>)}</div>:doses.isError?<ErrorState retry={()=>doses.refetch()}/>:shown.length===0?<EmptyState title={filter==='all'?'No doses on this day':'Nothing in this view'} body={filter==='all'?'When a medication schedule is active, its planned doses will be shown here.':'Try another view to see more of the day.'}/>:<div className="divide-y divide-[#edf2f2]">{shown.map(d=><DoseRow key={d.id} dose={d} patientName={(patients.data||[]).find(p=>p.id===d.patientId)?.name} readOnly={user.role!=='patient'} role={user.role}/>)}</div>}
     </Card>
+    {(user.role==='patient'||user.role==='caregiver')&&(patients.data||[])[0]&&<div className="mt-5"><SideEffectsPanel patientId={(patients.data||[])[0].id} patientFacing={user.role==='patient'}/></div>}
     {(user.role==='patient'||user.role==='caregiver')&&(patients.data||[])[0]&&<div className="mt-5"><LabResultsPanel patientId={(patients.data||[])[0].id} canUpload={user.role==='patient'} canReview={false}/></div>}
     {user.role==='patient'&&<div className="mt-5"><PatientInsightPanel patient={(patients.data||[]).find(p=>p.userId===user.id)} patientFacing canGenerate/></div>}
     <div className="mt-5 rounded-2xl border border-[#dceae8] bg-[#eef7f5] p-4 text-xs leading-5 text-[#668783]"><span className="font-semibold text-[#386c69]">Need help with a dose?</span> It’s okay if a dose was missed or your routine changed. Log what happened and contact your care team if you have questions.{user.role==='patient'&&<Link href="/messages" data-testid="link-message-doctor" className="mt-3 flex w-fit items-center gap-2 rounded-xl bg-[#17647a] px-4 py-2.5 text-sm font-semibold text-white hover:bg-[#125366]"><MessageSquare size={16}/> Message my doctor</Link>}</div>
@@ -533,6 +551,17 @@ function MedicationProgressPanel({patientId,canAdd,patientFacing=false}:{patient
       </div>})}</div>}
     <div className="border-t border-[#edf2f2] px-5 py-3 text-[10px] leading-4 text-[#91a4a8] sm:px-6">Indicator: <b className="text-[#34785d]">green</b> ≥80% taken · <b className="text-[#99702f]">yellow</b> 50–79% or a dose waiting to be checked · <b className="text-[#a75848]">red</b> below 50%.</div>
     {adding&&<MedicationModal medication={null} patients={patients.data||[]} defaultPatientId={patientId} onClose={()=>setAdding(false)}/>}
+  </Card>;
+}
+
+/** Side effects to watch for, per active medication, as entered by the prescribing doctor. */
+function SideEffectsPanel({patientId,patientFacing}:{patientId:number;patientFacing:boolean}){
+  const meds=useListMedications({patientId},{query:{queryKey:getListMedicationsQueryKey({patientId})}});
+  const list=(meds.data||[]).filter(m=>m.active&&(!m.endDate||m.endDate>=dateToday()));
+  return <Card testId="panel-side-effects">
+    <div className="border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><h2 className="font-bold text-[#254954]">{patientFacing?'My medicines: side effects to watch for':'Side effects to watch for'}</h2><p className="mt-1 text-xs text-[#81969b]">Written by the doctor who prescribed each medicine</p></div>
+    {meds.isLoading?<ListSkeleton/>:meds.isError?<ErrorState retry={()=>meds.refetch()}/>:list.length===0?<EmptyState title="No active medicines" body="Medicines your doctor prescribes will appear here." icon={Pill}/>:<ul className="divide-y divide-[#edf2f2]">{list.map(m=><li key={m.id} data-testid={`row-side-effects-${m.id}`} className="px-5 py-3.5 sm:px-6"><div className="flex flex-wrap items-baseline gap-x-2"><span className="text-sm font-bold text-[#31535e]">{m.name}</span><span className="text-xs text-[#81969b]">{m.dosage}</span></div>{m.sideEffects?<p className="mt-1 whitespace-pre-line text-xs leading-5 text-[#5c5130]">{m.sideEffects}</p>:<p className="mt-1 text-xs text-[#91a4a8]">No side effects recorded by your doctor yet. Ask your doctor or pharmacist what to watch for.</p>}</li>)}</ul>}
+    <div className="border-t border-[#edf2f2] px-5 py-3 text-[11px] leading-5 text-[#8a989b] sm:px-6">{patientFacing?<>Feeling unwell after a medicine? Note it in <Link href="/health" className="font-semibold text-[#287d80] underline-offset-2 hover:underline">My health</Link> or <Link href="/messages" className="font-semibold text-[#287d80] underline-offset-2 hover:underline">message your doctor</Link>. For severe reactions, call your local emergency number.</>:'For severe reactions, call your local emergency number.'}</div>
   </Card>;
 }
 
@@ -675,6 +704,25 @@ function AccountPage({user}:{user:AuthUser}) {
     </div>
   </div>;
 }
+/** The header's help button: what this role can do, where to find it, and a sound check. */
+function HelpDialog({user,onClose}:{user:AuthUser;onClose:()=>void}){
+  const [tested,setTested]=useState('');
+  const tips:Record<string,[string,string,string][]>={
+    patient:[['/today','Today’s doses','When a dose is due you hear a chime and see a reminder. Tap “I’ve taken it”, “I took it late” or “Missed”.'],['/prescriptions','My prescriptions','Your medicines, how to take them, side effects to watch for, and files from your doctor.'],['/health','My health','Record blood pressure, sugar and how you feel. Works without internet.'],['/messages','Message my doctor','Ask your care team a question.']],
+    caregiver:[['/today','Today’s doses','See your patient’s doses and reminders. Only the patient marks doses as taken.'],['/prescriptions','Prescriptions','Medicines, side effects to watch for, and prescription files.'],['/messages','Messages','Read the conversation between your patient and their doctor.']],
+    provider:[['/patients','Patients','Open a patient to see adherence, upload prescriptions and lab results, and add side effects to medications.'],['/medications','Medications','Create schedules (times in 12-hour form, e.g. 8:00 AM) and record side effects.'],['/today','Today’s doses','View-only: patients log their own doses.'],['/ai','AI risk prediction','Which patients may need extra support this week.']],
+    admin:[['/admin/users','Team access','Add doctors, patients and caregivers.'],['/patients','Patients','Patient profiles and care records.'],['/admin/audit','Audit activity','Who changed what, and when.']],
+  };
+  const test=()=>setTested(playChime({force:true})?'If you heard a chime, sound is working. If not, check your phone’s volume and silent mode.':'This device can’t play sounds from the browser.');
+  return <Modal title="Help" subtitle={`Quick guide for your ${roleLabel(user.role).toLowerCase()} account`} onClose={onClose}>
+    <div className="space-y-4" data-testid="panel-help">
+      <ul className="space-y-2">{(tips[user.role]||[]).map(([href,label,body])=><li key={href}><Link href={href} onClick={onClose} className="block rounded-xl border border-[#e3eded] p-3 transition hover:border-[#9fcfc9] hover:bg-[#f6faf9]"><div className="flex items-center justify-between text-sm font-bold text-[#31535e]">{label}<ArrowRight size={14} className="text-[#8aa0a4]"/></div><p className="mt-1 text-xs leading-5 text-[#71888e]">{body}</p></Link></li>)}</ul>
+      <div className="rounded-xl bg-[#f4f9f8] p-3 text-xs leading-5 text-[#5f7d83]"><div className="font-semibold text-[#37685f]">Reminders and sound</div>Open the bell, then <b>Sound &amp; alerts</b>, to turn the sound on or off and allow pop-up notifications. On Android, CareTrack also uses the phone’s own notification sound.<div className="mt-2"><button type="button" data-testid="button-help-test-sound" onClick={test} className="h-9 rounded-lg border border-[#c8e2df] bg-white px-3 text-xs font-semibold text-[#247b79] hover:bg-[#eef9f6]">▶ Test notification sound</button></div>{tested&&<p role="status" className="mt-2 text-[#37796b]">{tested}</p>}</div>
+      <p className="text-[11px] leading-5 text-[#8ba0a4]">For emergencies, call your local emergency number. CareTrack messages are not monitored around the clock.</p>
+      <div className="flex justify-end"><button type="button" onClick={onClose} className="h-10 rounded-lg bg-[#17647a] px-4 text-sm font-semibold text-white hover:bg-[#125366]">Close</button></div>
+    </div>
+  </Modal>;
+}
 const roleLabel=(role:string)=>({admin:'Administrator',provider:'Doctor',patient:'Patient',caregiver:'Caregiver'} as Record<string,string>)[role]||role;
 /** Random temporary password: 10 characters with letters and digits, no look-alike characters. */
 /** Readable temporary password like "mint-4827-rosa": lowercase, no look-alike characters, easy to type on a phone. */
@@ -763,29 +811,148 @@ const SOUND_KEY='caretrack-sound', QUIET_KEY='caretrack-quiet-hours';
 const readPref=(key:string,fallback:string)=>{try{return localStorage.getItem(key)??fallback}catch{return fallback}};
 const writePref=(key:string,value:string)=>{try{localStorage.setItem(key,value)}catch{/* private mode */}};
 let lastChime=0;
-/** Two soft tones (about half a second). Plays at most once a minute and never during quiet hours (10 PM to 7 AM). */
-function playChime(){
-  if(readPref(SOUND_KEY,'on')!=='on')return false;
-  const hour=new Date().getHours();
-  if(readPref(QUIET_KEY,'on')==='on'&&(hour>=22||hour<7))return false;
-  if(Date.now()-lastChime<60_000)return false;
+// Browsers and the Android WebView only allow sound after the person has tapped the page, and a
+// sound context created later (from a timer) starts muted. So one shared context is created and
+// "unlocked" on the first tap or key press, and every later chime reuses it.
+type WebkitWindow=Window&{webkitAudioContext?:typeof AudioContext};
+let audioCtx:AudioContext|null=null;
+const audioContext=()=>{
+  if(audioCtx)return audioCtx;
+  const Ctx=window.AudioContext||(window as WebkitWindow).webkitAudioContext;
+  if(!Ctx)return null;
+  try{audioCtx=new Ctx()}catch{audioCtx=null}
+  return audioCtx;
+};
+const unlockAudio=()=>{
+  const ctx=audioContext();
+  if(!ctx)return;
+  if(ctx.state==='suspended')void ctx.resume().catch(()=>{/* still blocked */});
+  try{const src=ctx.createBufferSource();src.buffer=ctx.createBuffer(1,1,22050);src.connect(ctx.destination);src.start(0)}catch{/* older browsers */}
+  if(ctx.state==='running')['pointerdown','keydown','touchend'].forEach(ev=>window.removeEventListener(ev,unlockAudio));
+};
+if(typeof window!=='undefined')['pointerdown','keydown','touchend'].forEach(ev=>window.addEventListener(ev,unlockAudio,{passive:true}));
+const inQuietHours=()=>{const hour=new Date().getHours();return readPref(QUIET_KEY,'on')==='on'&&(hour>=22||hour<7)};
+/**
+ * A clear three-tone chime (about a second). Plays at most once a minute so several alerts
+ * arriving together make one sound. Medication reminders ignore quiet hours (a 10 PM dose
+ * still needs its reminder); other alerts stay silent from 10 PM to 7 AM. Returns whether it played.
+ */
+function playChime({kind='alert',force=false}:{kind?:'dose'|'alert';force?:boolean}={}){
+  if(!force){
+    if(readPref(SOUND_KEY,'on')!=='on')return false;
+    if(kind!=='dose'&&inQuietHours())return false;
+    if(Date.now()-lastChime<60_000)return false;
+  }
+  const ctx=audioContext();
+  if(!ctx)return false;
   lastChime=Date.now();
-  try{const ctx=new (window.AudioContext||(window as unknown as {webkitAudioContext:typeof AudioContext}).webkitAudioContext)();[[660,0],[880,0.18]].forEach(([freq,at])=>{const osc=ctx.createOscillator(),gain=ctx.createGain();osc.type='sine';osc.frequency.value=freq;gain.gain.setValueAtTime(0.0001,ctx.currentTime+at);gain.gain.exponentialRampToValueAtTime(0.12,ctx.currentTime+at+0.02);gain.gain.exponentialRampToValueAtTime(0.0001,ctx.currentTime+at+0.35);osc.connect(gain).connect(ctx.destination);osc.start(ctx.currentTime+at);osc.stop(ctx.currentTime+at+0.4)});setTimeout(()=>ctx.close(),1200)}catch{/* audio blocked until the user interacts */}
+  const play=()=>{try{const t0=ctx.currentTime+0.02;[[784,0],[988,0.22],[1319,0.44]].forEach(([freq,at])=>{const osc=ctx.createOscillator(),gain=ctx.createGain();osc.type='sine';osc.frequency.value=freq;gain.gain.setValueAtTime(0.0001,t0+at);gain.gain.exponentialRampToValueAtTime(0.32,t0+at+0.02);gain.gain.exponentialRampToValueAtTime(0.0001,t0+at+0.42);osc.connect(gain).connect(ctx.destination);osc.start(t0+at);osc.stop(t0+at+0.45)})}catch{/* audio unavailable */}};
+  if(ctx.state==='suspended')void ctx.resume().then(play).catch(()=>{/* blocked until the next tap */});else play();
+  try{navigator.vibrate?.([180,90,180])}catch{/* no vibration */}
   return true;
 }
+/** Remembers which alerts already made a sound, per user, so a reload or a second tab never repeats them. */
+const ALERTED_KEY='caretrack-alerted';
+const readAlerted=(userId:number):string[]=>{try{const v=JSON.parse(localStorage.getItem(`${ALERTED_KEY}-${userId}`)||'[]');return Array.isArray(v)?v:[]}catch{return []}};
+const markAlerted=(userId:number,keys:string[])=>{if(!keys.length)return;try{localStorage.setItem(`${ALERTED_KEY}-${userId}`,JSON.stringify([...readAlerted(userId),...keys].slice(-300)))}catch{/* storage unavailable */}};
+/** Android app with notifications allowed: the phone's own dose alarm makes the sound. */
+let nativeDoseAlarms=false;
 const ALERT_KINDS=['reminder','overdue','message','ai-risk','appointment','risk','lab','prescription'];
+const FRESH_MS=10*60_000;
 /** Plays a sound and shows a system notification when new important notifications arrive. */
-function useNotificationAlerts(notifications:Notification[]){
+function useNotificationAlerts(notifications:Notification[],user:AuthUser){
   const seen=useRef<number|null>(null);
   useEffect(()=>{
+    if(!notifications.length&&seen.current===null)return;
     const newest=notifications.reduce((m,n)=>Math.max(m,n.id),0);
-    if(seen.current===null){seen.current=newest;return}
-    const fresh=notifications.filter(n=>n.id>seen.current!&&!n.read&&ALERT_KINDS.includes(n.kind));
-    seen.current=Math.max(seen.current,newest);
+    const first=seen.current===null;
+    const already=new Set(readAlerted(user.id));
+    // On first load only alerts from the last few minutes count (e.g. the app was opened right
+    // as a dose reminder arrived); older unread ones stay quiet.
+    const fresh=notifications.filter(n=>!n.read&&ALERT_KINDS.includes(n.kind)&&!already.has(`n${n.id}`)&&(first?Date.now()-new Date(n.createdAt).getTime()<FRESH_MS:n.id>seen.current!));
+    seen.current=Math.max(seen.current??0,newest);
     if(!fresh.length)return;
-    const played=playChime();
-    if(played&&document.hidden&&'Notification' in window&&Notification.permission==='granted'){const n=fresh[0];try{new window.Notification(`CareTrack: ${n.title}`,{body:n.message,tag:`caretrack-${n.id}`})}catch{/* unsupported */}}
-  },[notifications]);
+    markAlerted(user.id,fresh.map(n=>`n${n.id}`));
+    // Patients and caregivers already hear dose reminders from useDoseDueAlerts; don't chime twice.
+    const sounding=fresh.filter(n=>!(n.kind==='reminder'&&(user.role==='patient'||user.role==='caregiver')));
+    if(!sounding.length)return;
+    const dose=sounding.some(n=>n.kind==='reminder'||n.kind==='overdue');
+    const played=nativeDoseAlarms&&dose?false:playChime({kind:dose?'dose':'alert'});
+    if(played&&document.hidden&&!isNativeApp&&'Notification' in window&&Notification.permission==='granted'){const n=sounding[0];try{new window.Notification(`CareTrack: ${n.title}`,{body:n.message,tag:`caretrack-${n.id}`,icon:'/icon-192.png'})}catch{/* unsupported */}}
+  },[notifications,user.id,user.role]);
+}
+
+type DueDose={id:number;medicationName:string;dosage:string;scheduledTime:string;patientName?:string};
+/**
+ * App-wide dose reminders for patients and caregivers, on every page: when a dose becomes due
+ * it chimes once, shows a dismissible banner and (website, tab in the background) a system
+ * notification. It also keeps the Android phone alarms and the website's offline reminders
+ * in step with today's doses. Each dose alerts only once, even across reloads.
+ */
+function useDoseDueAlerts(user:AuthUser,enabled:boolean){
+  const watch=enabled&&(user.role==='patient'||user.role==='caregiver');
+  const params={date:dateToday()};
+  const doses=useListDoses(params,{query:{enabled:watch,queryKey:getListDosesQueryKey(params),refetchInterval:60_000}});
+  const patients=useListPatients({query:{enabled:watch,queryKey:getListPatientsQueryKey()}});
+  const [due,setDue]=useState<DueDose[]>([]);
+  const [dismissed,setDismissed]=useState<number[]>([]);
+  const list=doses.data;
+  // Phone alarms (Android) and the service worker's reminders (website) for today's doses.
+  useEffect(()=>{
+    if(!watch||!list)return;
+    if(isNativeApp){latestDoses=list;window.dispatchEvent(new Event('caretrack-doses'));void syncNativeDoseReminders(list);void notificationPermission().then(p=>{nativeDoseAlarms=p==='granted'});return}
+    postToWorker({type:'cache-dose-schedule',doses:list});
+  },[watch,list]);
+  useEffect(()=>{
+    if(!watch||!list)return;
+    const check=()=>{
+      const now=Date.now();
+      const nameOf=(id:number)=>user.role==='caregiver'?(patients.data||[]).find(p=>p.id===id)?.name:undefined;
+      // Due now: scheduled, at or past its time, and still inside the 2-hour window to log it.
+      const current=list.filter(d=>d.status==='scheduled'&&new Date(d.scheduledTime).getTime()<=now&&now-new Date(d.scheduledTime).getTime()<2*60*60*1000);
+      const next=current.map(d=>({id:d.id,medicationName:d.medicationName,dosage:d.dosage,scheduledTime:d.scheduledTime,patientName:nameOf(d.patientId)}));
+      setDue(prev=>prev.length===next.length&&prev.every((p,i)=>p.id===next[i].id&&p.patientName===next[i].patientName)?prev:next);
+      const already=new Set(readAlerted(user.id));
+      const fresh=current.filter(d=>!already.has(`d${d.id}`));
+      if(!fresh.length)return;
+      markAlerted(user.id,fresh.map(d=>`d${d.id}`));
+      // Only doses that became due in the last few minutes make a sound; older ones just show.
+      const ringing=fresh.filter(d=>now-new Date(d.scheduledTime).getTime()<FRESH_MS);
+      if(!ringing.length)return;
+      if(!(isNativeApp&&nativeDoseAlarms))playChime({kind:'dose'});
+      if(!isNativeApp&&document.hidden&&typeof Notification!=='undefined'&&Notification.permission==='granted'){
+        const d=ringing[0];
+        // Same tag as the service worker's reminder, so the phone shows one notification, not two.
+        navigator.serviceWorker?.ready.then(r=>r.showNotification(`CareTrack dose reminder: ${d.medicationName}`,{body:`${d.dosage||'Dose'} is due now (${timeLabel(d.scheduledTime)}).`,tag:`dose-${d.id}`,icon:'/icon-192.png',badge:'/icon-192.png',silent:false,requireInteraction:true,data:{url:'/today',doseId:d.id}} as NotificationOptions)).catch(()=>{/* no service worker */});
+      }
+    };
+    check();
+    const timer=window.setInterval(check,15_000);
+    const onVisible=()=>{if(!document.hidden)check()};
+    document.addEventListener('visibilitychange',onVisible);
+    return()=>{window.clearInterval(timer);document.removeEventListener('visibilitychange',onVisible)};
+  },[watch,list,patients.data,user.id,user.role]);
+  return {due:due.filter(d=>!dismissed.includes(d.id)),dismiss:(id:number)=>setDismissed(x=>[...x,id])};
+}
+
+/** Banner for doses that are due now. Compact, dismissible, and placed under the header so it never hides buttons. */
+function DueDoseAlert({due,onDismiss,role}:{due:DueDose[];onDismiss:(id:number)=>void;role:string}){
+  const [location]=useLocation();
+  // On Today's doses the due dose is already highlighted in the list, so no banner covers the page.
+  if(!due.length||location==='/today')return null;
+  const first=due[0],more=due.length-1;
+  return <div data-testid="alert-dose-due" role="alert" aria-live="assertive" className="dose-alert fixed inset-x-3 top-[76px] z-40 mx-auto max-w-md rounded-2xl border border-[#f0dfb8] bg-[#fffaf0] shadow-[0_12px_30px_rgba(22,62,76,.16)] sm:left-auto sm:right-6 sm:mx-0 sm:w-[380px] lg:right-8">
+    <div className="dose-alert-body flex items-start gap-3 p-3">
+      <div className="grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#fbf1df] text-[#99702f]"><Bell size={17}/></div>
+      <div className="min-w-0 flex-1">
+        <div className="text-[11px] font-bold uppercase tracking-wider text-[#99702f]">Dose due now{more>0?` · ${more} more`:''}</div>
+        <div className="mt-0.5 break-words text-sm font-bold text-[#3d3a26]" data-testid="text-dose-due-name">{first.medicationName} <span className="font-semibold text-[#7a6a40]">{first.dosage}</span></div>
+        <div className="text-xs text-[#7a6a40]">Scheduled {timeLabel(first.scheduledTime)}{first.patientName?` · ${first.patientName}`:''}</div>
+        {<Link href="/today" onClick={()=>onDismiss(first.id)} data-testid="link-dose-due-open" className="mt-2 inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#17647a] px-3 text-xs font-semibold text-white hover:bg-[#125366]">{role==='patient'?'Log this dose':'View today’s doses'} <ArrowRight size={13}/></Link>}
+      </div>
+      <button data-testid="button-dismiss-dose-due" aria-label="Dismiss reminder" onClick={()=>due.forEach(d=>onDismiss(d.id))} className="grid h-9 w-9 shrink-0 place-items-center rounded-lg text-[#99702f] hover:bg-[#fbf1df]"><X size={17}/></button>
+    </div>
+  </div>;
 }
 function SoundSettings({user}:{user:AuthUser}){
   const [sound,setSound]=useState(readPref(SOUND_KEY,'on')),[quiet,setQuiet]=useState(readPref(QUIET_KEY,'on')),[perm,setPerm]=useState<string>(isNativeApp?'loading':typeof Notification!=='undefined'?Notification.permission:'denied');
@@ -796,8 +963,9 @@ function SoundSettings({user}:{user:AuthUser}){
     :Notification.requestPermission().then(p=>{setPerm(p);if(p==='granted')void registerWellnessSync()});
   const cycleWellness=()=>{const next:WellnessFrequency=wellness==='normal'?'low':wellness==='low'?'off':'normal';setWellness(next);writePref(WELLNESS_KEY,next);syncWellnessConfig(user);if(next!=='off'&&perm==='default')void allow()};
   return <div className="flex flex-wrap items-center gap-2 border-b border-[#edf2f2] bg-[#f8fbfb] px-4 py-2 text-[11px]">
-    <button data-testid="button-toggle-sound" onClick={()=>{const v=sound==='on'?'off':'on';setSound(v);writePref(SOUND_KEY,v);if(v==='on'){lastChime=0;playChime()}}} className={`rounded-full border px-2.5 py-1 font-semibold ${sound==='on'?'border-[#9fcfc9] text-[#2f8a74]':'border-[#dce8e8] text-[#8a989b]'}`}>{sound==='on'?'🔔 Sound on':'🔕 Sound off'}</button>
-    <button data-testid="button-toggle-quiet" onClick={()=>{const v=quiet==='on'?'off':'on';setQuiet(v);writePref(QUIET_KEY,v)}} className={`rounded-full border px-2.5 py-1 font-semibold ${quiet==='on'?'border-[#9fcfc9] text-[#2f8a74]':'border-[#dce8e8] text-[#8a989b]'}`}>Quiet 10 PM–7 AM: {quiet}</button>
+    <button data-testid="button-toggle-sound" onClick={()=>{const v=sound==='on'?'off':'on';setSound(v);writePref(SOUND_KEY,v);if(v==='on')playChime({force:true})}} className={`rounded-full border px-2.5 py-1 font-semibold ${sound==='on'?'border-[#9fcfc9] text-[#2f8a74]':'border-[#dce8e8] text-[#8a989b]'}`}>{sound==='on'?'🔔 Sound on':'🔕 Sound off'}</button>
+    {sound==='on'&&<button data-testid="button-test-sound" onClick={()=>playChime({force:true})} className="rounded-full border border-[#dce8e8] px-2.5 py-1 font-semibold text-[#397d7e]">▶ Test sound</button>}
+    <button data-testid="button-toggle-quiet" title="Messages and other alerts stay silent from 10 PM to 7 AM. Medication reminders always sound." onClick={()=>{const v=quiet==='on'?'off':'on';setQuiet(v);writePref(QUIET_KEY,v)}} className={`rounded-full border px-2.5 py-1 font-semibold ${quiet==='on'?'border-[#9fcfc9] text-[#2f8a74]':'border-[#dce8e8] text-[#8a989b]'}`}>Quiet 10 PM–7 AM (except doses): {quiet}</button>
     <button data-testid="button-toggle-wellness" title="Hydration reminders, health tips, motivation and quotes between 8 AM and 9 PM. Works offline." onClick={cycleWellness} className={`rounded-full border px-2.5 py-1 font-semibold ${wellness!=='off'?'border-[#9fcfc9] text-[#2f8a74]':'border-[#dce8e8] text-[#8a989b]'}`}>🌱 Wellness tips: {wellness==='off'?'off':wellness==='low'?'2/day':'4/day'}</button>
     {wellness!=='off'&&perm==='granted'&&<button data-testid="button-preview-wellness" onClick={()=>isNativeApp?void previewNativeWellness(user.name,latestDoses):postToWorker({type:'wellness-preview'})} className="rounded-full border border-[#dce8e8] px-2.5 py-1 font-semibold text-[#397d7e]">Send a tip now</button>}
     {perm==='default'&&<button data-testid="button-allow-notifications" onClick={allow} className="rounded-full border border-[#dce8e8] px-2.5 py-1 font-semibold text-[#397d7e]">{isNativeApp?'Allow notifications':'Allow pop-up alerts'}</button>}
@@ -862,7 +1030,7 @@ function WellnessNotifications({user}:{user:AuthUser}){
 
 // ---- Offline mode: connection and sync status (the saving and syncing itself is in offline.ts) ----
 const useSync=()=>useSyncExternalStore(subscribeSync,getSyncSnapshot);
-const clock=(t:number)=>new Date(t).toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+const clock=(t:number)=>dateTimeLabel(t);
 const SYNC_LOOK:Record<SyncState,[string,string]>={
   pending:['Pending sync','bg-[#eef5fa] text-[#2f5d72]'],
   syncing:['Syncing…','bg-[#eef5fa] text-[#2f5d72]'],
@@ -888,7 +1056,8 @@ function SyncChip(){
   const label=!s.online?'Offline':s.syncing?'Syncing':s.attention.length?'Needs attention':waiting?`${waiting} pending`:'Online';
   const dot=!s.online?'bg-[#d9a23f]':s.attention.length?'bg-[#d9755e]':waiting||s.syncing?'bg-[#5b9bd5]':'bg-[#4cb7a3]';
   const title=!s.online?'No connection to CareTrack. Supported changes are saved on this device.':waiting?`${waiting} change${waiting===1?'':'s'} saved on this device, waiting to upload.`:'Connected. Everything is saved to CareTrack.';
-  return <div data-testid="status-connection" data-online={s.online?'true':'false'} title={title} className="flex items-center gap-1.5 rounded-full border border-[#d9e8e8] bg-white px-2.5 py-1.5 text-[11px] font-semibold text-[#57737c]"><span className={`h-2 w-2 rounded-full ${dot} ${s.syncing?'animate-pulse':''}`}/>{label}</div>;
+  // A status label, not a button: plain text with a coloured dot (details are in the banner below the header).
+  return <div data-testid="status-connection" role="status" aria-label={`Connection: ${label}`} data-online={s.online?'true':'false'} title={title} className="flex cursor-default select-none items-center gap-1.5 px-1 text-[11px] font-semibold text-[#57737c]"><span aria-hidden="true" className={`h-2 w-2 rounded-full ${dot} ${s.syncing?'animate-pulse':''}`}/>{label}</div>;
 }
 /** Banner under the header: offline notice, upload progress, retries, and changes that need the user. */
 function SyncBanner(){
@@ -904,7 +1073,7 @@ function SyncBanner(){
   else if(s.justSynced){tone='done';text=`Back online. ${n(s.justSynced)} saved to CareTrack.`}
   if(!text&&!s.attention.length)return null;
   const colors={offline:'bg-[#fdf3dd] text-[#7a5a1c]',info:'bg-[#eef5fa] text-[#2f5d72]',done:'bg-[#e6f4ed] text-[#2f7a5d]'}[tone];
-  return <div data-testid="banner-offline" data-tone={tone} role="status" className={`sticky top-[68px] z-20 text-xs font-semibold ${colors}`}>
+  return <div data-testid="banner-offline" data-tone={tone} role="status" className={`app-below-header sticky top-[68px] z-20 text-xs font-semibold ${colors}`}>
     {text&&<div className="flex items-center gap-2 px-4 py-2 sm:px-8">{s.online?<Wifi size={14} className="shrink-0"/>:<WifiOff size={14} className="shrink-0"/>}<span data-testid="text-sync-status" className="flex-1">{text}</span>{s.online&&(s.retrying>0||s.blocked>0)&&<button data-testid="button-sync-retry" onClick={()=>void retryAll()} className="shrink-0 rounded-lg border border-[#e6d3a8] bg-white/70 px-2.5 py-1 font-semibold">Retry now</button>}</div>}
     {s.attention.length>0&&<div className="border-t border-[#f3d4c9] bg-[#fff4f0] px-4 py-2 text-[#9a4b39] sm:px-8">
       <button data-testid="button-sync-review" onClick={()=>setOpen(!open)} className="flex w-full items-center gap-2 text-left"><CircleHelp size={14} className="shrink-0"/><span className="flex-1">{n(s.attention.length)} couldn’t be saved to CareTrack and need{s.attention.length===1?'s':''} your attention.</span><span className="underline">{open?'Hide':'Review'}</span></button>
@@ -962,7 +1131,7 @@ function AiInsightsPage(){
         <Metric label="Model accuracy" value={m.oobAccuracy!==null?`${(m.oobAccuracy*100).toFixed(1)}%`:'—'} detail="Out-of-bag estimate on unseen samples" icon={ShieldCheck} accent="teal" progress={m.oobAccuracy!==null?m.oobAccuracy*100:undefined}/>
         <Metric label="Decision trees" value={`${m.trees}`} detail={`Max depth ${m.maxDepth}, Gini impurity`} icon={Activity} accent="blue"/>
         <Metric label="Training samples" value={`${m.samples}`} detail={`${m.classLow} low · ${m.classModerate} moderate · ${m.classHigh} high`} icon={ClipboardList} accent="gold"/>
-        <Metric label="Last trained" value={new Date(m.trainedAt).toLocaleTimeString([],{hour:'numeric',minute:'2-digit'})} detail={`${new Date(m.trainedAt).toLocaleDateString()} · retrains every 6 hours`} icon={Clock3} accent="blue"/>
+        <Metric label="Last trained" value={timeLabel(m.trainedAt)} detail={`${new Date(m.trainedAt).toLocaleDateString()} · retrains every 6 hours`} icon={Clock3} accent="blue"/>
       </div>
       <div className="mt-5 grid gap-5 xl:grid-cols-[1fr_1fr]">
         <Card><div className="border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><h2 className="font-bold text-[#254954]">Feature importance</h2><p className="mt-1 text-xs text-[#81969b]">How much each patient parameter influences the prediction (mean decrease in Gini impurity)</p></div>
@@ -1004,23 +1173,50 @@ function MyCarePlan({patientId}:{patientId:number}){
     <div className="grid gap-5 p-5 sm:p-6 md:grid-cols-3">
       <div><div className="text-[10px] font-bold uppercase tracking-wider text-[#7c9699]">My tasks</div><ul className="mt-2 space-y-2">{(risk.data?.patientTasks||['Keep following your schedule.']).map((t,i)=><li key={i} className="flex gap-2 text-xs leading-5 text-[#31535e]"><span className="mt-0.5 grid h-4 w-4 shrink-0 place-items-center rounded border border-[#9fcfc9]"/>{t}</li>)}</ul></div>
       <div><div className="text-[10px] font-bold uppercase tracking-wider text-[#7c9699]">Health tips</div><ul className="mt-2 space-y-2">{(risk.data?.healthTips||[]).map((t,i)=><li key={i} className="flex gap-2 text-xs leading-5 text-[#4c6b73]"><HeartPulse size={13} className="mt-0.5 shrink-0 text-[#2f9a7f]"/>{t}</li>)}</ul></div>
-      <div><div className="text-[10px] font-bold uppercase tracking-wider text-[#7c9699]">Next check-up</div>{next?<div className="mt-2 rounded-xl bg-[#eef5fa] p-3 text-xs text-[#2f5d72]"><div className="font-bold">{new Date(next.scheduledAt).toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}</div><div className="mt-1">{next.reason}</div>{next.providerName&&<div className="mt-1 text-[#5d7f8f]">with {next.providerName}</div>}</div>:<p className="mt-2 text-xs text-[#81969b]">No check-up scheduled.</p>}</div>
+      <div><div className="text-[10px] font-bold uppercase tracking-wider text-[#7c9699]">Next check-up</div>{next?<div className="mt-2 rounded-xl bg-[#eef5fa] p-3 text-xs text-[#2f5d72]"><div className="font-bold">{dateTimeLabel(next.scheduledAt,{weekday:'short',month:'short',day:'numeric'})}</div><div className="mt-1">{next.reason}</div>{next.providerName&&<div className="mt-1 text-[#5d7f8f]">with {next.providerName}</div>}</div>:<p className="mt-2 text-xs text-[#81969b]">No check-up scheduled.</p>}</div>
     </div></Card>;
 }
 
+/** File types and size the server accepts for prescriptions and lab results (see routes/care.ts). */
+const LAB_FILE_TYPES=['application/pdf','image/png','image/jpeg','image/webp'],LAB_FILE_MAX=5*1024*1024;
 /** Lab result files: patients upload, doctors review. Files are encrypted on the server. */
 function LabResultsPanel({patientId,canUpload,canReview,category='lab'}:{patientId:number;canUpload:boolean;canReview:boolean;category?:'lab'|'prescription'}){
   const rx=category==='prescription';
   const labs=useListLabResults(patientId,{query:{queryKey:getListLabResultsQueryKey(patientId)}});
   const upload=useUploadLabResult(),review=useReviewLabResult(),qc=useQueryClient();
-  const [title,setTitle]=useState(''),[file,setFile]=useState<File|null>(null),[error,setError]=useState(''),[comment,setComment]=useState<Record<number,string>>({}),[open,setOpen]=useState(false);
+  const [title,setTitle]=useState(''),[file,setFile]=useState<File|null>(null),[error,setError]=useState(''),[done,setDone]=useState(''),[comment,setComment]=useState<Record<number,string>>({}),[open,setOpen]=useState(false),[dragging,setDragging]=useState(false);
+  const pickRef=useRef<HTMLInputElement>(null),cameraRef=useRef<HTMLInputElement>(null);
   const refresh=()=>qc.invalidateQueries({queryKey:getListLabResultsQueryKey(patientId)});
-  const submit=(e:FormEvent)=>{e.preventDefault();setError('');if(!file)return;if(file.size>5*1024*1024){setError('The file must be smaller than 5 MB.');return}
-    const reader=new FileReader();reader.onload=()=>{const data=String(reader.result).split(',')[1]||'';upload.mutate({id:patientId,data:{title:title||file.name,fileName:file.name,mimeType:file.type||'application/octet-stream',dataBase64:data,category}},{onSuccess:()=>{setTitle('');setFile(null);setOpen(false);refresh()},onError:err=>setError(apiError(err,'Upload failed.'))})};reader.readAsDataURL(file)};
+  // Same rules as the server: PDF, PNG, JPG or WebP, up to 5 MB.
+  const choose=(f:File|null|undefined)=>{setError('');setDone('');if(!f){setFile(null);return}
+    const type=f.type||(/\.pdf$/i.test(f.name)?'application/pdf':/\.png$/i.test(f.name)?'image/png':/\.jpe?g$/i.test(f.name)?'image/jpeg':/\.webp$/i.test(f.name)?'image/webp':'');
+    if(!LAB_FILE_TYPES.includes(type)){setFile(null);setError('Choose a PDF or a photo (PNG, JPG or WebP).');return}
+    if(f.size===0){setFile(null);setError('That file is empty.');return}
+    if(f.size>LAB_FILE_MAX){setFile(null);setError(`That file is ${(f.size/1048576).toFixed(1)} MB. The limit is 5 MB.`);return}
+    setFile(f);setOpen(true);if(!title)setTitle(f.name.replace(/\.[^.]+$/,'').slice(0,120))};
+  const reset=()=>{setTitle('');setFile(null);setError('');setOpen(false);if(pickRef.current)pickRef.current.value='';if(cameraRef.current)cameraRef.current.value=''};
+  const submit=(e:FormEvent)=>{e.preventDefault();setError('');if(!file){setError('Choose a file first.');return}
+    const type=file.type||(/\.pdf$/i.test(file.name)?'application/pdf':'image/jpeg');
+    const reader=new FileReader();reader.onerror=()=>setError('That file couldn’t be read. Try choosing it again.');reader.onload=()=>{const data=String(reader.result).split(',')[1]||'';upload.mutate({id:patientId,data:{title:(title.trim()||file.name).slice(0,120),fileName:file.name,mimeType:type,dataBase64:data,category}},{onSuccess:(r)=>{reset();setDone(`“${r.title}” was uploaded and the ${rx?'patient was':'patient and care team were'} notified.`);refresh()},onError:err=>setError(apiError(err,err instanceof OfflineError?'Uploading files needs an internet connection. Try again when you’re online.':'Upload failed. Try again.'))})};reader.readAsDataURL(file)};
   const list=(labs.data||[]).filter(l=>l.category===category);
-  return <Card testId={rx?'panel-prescription-files':'panel-lab-results'}><div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><div><h2 className="font-bold text-[#254954]">{rx?'Prescription files':'Lab results'}</h2><p className="mt-1 flex items-center gap-1 text-xs text-[#81969b]"><ShieldCheck size={12}/> Files are encrypted and only visible to the care team</p></div>{canUpload&&!open&&<button data-testid="button-open-lab-upload" onClick={()=>setOpen(true)} className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#17647a] px-3 text-xs font-semibold text-white hover:bg-[#125366]"><Plus size={14}/> {rx?'Upload prescription':'Upload result'}</button>}</div>
-    {open&&<form onSubmit={submit} className="space-y-3 border-b border-[#eaf0f0] bg-[#f8fbfb] p-5 sm:px-6"><label className="block text-xs font-semibold text-[#526f77]">{rx?'Title':'What test is this?'}<input data-testid="input-lab-title" value={title} onChange={e=>setTitle(e.target.value)} maxLength={120} placeholder={rx?'e.g. Prescription – Oct 28 check-up':'e.g. CBC, Fasting blood sugar'} className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal"/></label><label className="block text-xs font-semibold text-[#526f77]">File (PDF or photo, up to 5 MB)<input data-testid="input-lab-file" type="file" required accept="application/pdf,image/png,image/jpeg,image/webp" capture="environment" onChange={e=>setFile(e.target.files?.[0]||null)} className="mt-1.5 block w-full text-xs"/></label>{error&&<p role="alert" className="text-xs text-red-700">{error}</p>}<div className="flex justify-end gap-2"><button type="button" onClick={()=>setOpen(false)} className="h-9 rounded-lg px-3 text-xs font-semibold text-[#6b8389]">Cancel</button><button data-testid="button-upload-lab" disabled={upload.isPending||!file} className="h-9 rounded-lg bg-[#17647a] px-3 text-xs font-semibold text-white disabled:opacity-50">{upload.isPending?'Uploading…':'Upload'}</button></div></form>}
-    {labs.isLoading?<ListSkeleton/>:list.length===0?<EmptyState title={rx?'No prescription files yet':'No lab results yet'} body={rx?(canUpload?'Upload a scanned or photographed prescription for the patient to view and keep.':'Prescriptions your doctor uploads will appear here.'):canUpload?'Upload a photo or PDF of a laboratory result for the care team to review.':'Lab results uploaded by the patient will appear here.'} icon={FileText}/>:<div className="divide-y divide-[#edf2f2]">{list.map(l=><div key={l.id} data-testid={`row-lab-${l.id}`} className="px-5 py-4 sm:px-6"><div className="flex flex-wrap items-center gap-3"><div className="grid h-9 w-9 place-items-center rounded-lg bg-[#eaf3f5] text-[#477f8e]"><FileText size={16}/></div><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-[#31535e]">{l.title}</div><div className="text-[11px] text-[#81969b]">{l.fileName} · {(l.sizeBytes/1024).toFixed(0)} KB · {l.uploadedByName} · {new Date(l.createdAt).toLocaleDateString()}</div></div><a href={`/api/lab-results/${l.id}/file`} onClick={nativeDownload(`/api/lab-results/${l.id}/file`,l.fileName)} target="_blank" rel="noreferrer" data-testid={`link-lab-file-${l.id}`} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#dce8e8] px-2.5 text-[11px] font-semibold text-[#52747c] hover:bg-[#f4f8f8]"><Download size={13}/>Open</a></div>
+  const label=rx?'Upload prescription':'Upload lab result';
+  return <Card testId={rx?'panel-prescription-files':'panel-lab-results'}><div className="flex flex-wrap items-center justify-between gap-2 border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><div><h2 className="font-bold text-[#254954]">{rx?'Prescription files':'Lab results'}</h2><p className="mt-1 flex items-center gap-1 text-xs text-[#81969b]"><ShieldCheck size={12}/> Encrypted. Only the patient and their care team can open these files.</p></div>{canUpload&&!open&&<button type="button" data-testid={rx?'button-open-prescription-upload':'button-open-lab-upload'} onClick={()=>setOpen(true)} className="inline-flex h-9 items-center gap-2 rounded-lg bg-[#17647a] px-3 text-xs font-semibold text-white hover:bg-[#125366]"><Plus size={14}/> {label}</button>}</div>
+    {/* Hidden pickers. "Choose file" opens the phone's file/photo chooser (no forced camera, so PDFs
+        can be picked on Android); "Take photo" opens the camera directly. */}
+    {canUpload&&<><input ref={pickRef} data-testid={rx?'input-prescription-file':'input-lab-file'} type="file" accept="application/pdf,image/png,image/jpeg,image/webp,.pdf,.png,.jpg,.jpeg,.webp" className="sr-only" tabIndex={-1} aria-hidden="true" onChange={e=>choose(e.target.files?.[0])}/><input ref={cameraRef} type="file" accept="image/*" capture="environment" className="sr-only" tabIndex={-1} aria-hidden="true" onChange={e=>choose(e.target.files?.[0])}/></>}
+    {done&&<div role="status" data-testid="status-lab-uploaded" className="mx-5 mt-4 flex items-start justify-between gap-2 rounded-xl border border-[#cfe7df] bg-[#eef8f4] px-3 py-2 text-xs text-[#37796b] sm:mx-6"><span>{done}</span><button type="button" aria-label="Dismiss" onClick={()=>setDone('')}><X size={14}/></button></div>}
+    {canUpload&&open&&<form onSubmit={submit} className="space-y-3 border-b border-[#eaf0f0] bg-[#f8fbfb] p-5 sm:px-6" data-testid={rx?'form-prescription-upload':'form-lab-upload'}>
+      <button type="button" data-testid={rx?'dropzone-prescription':'dropzone-lab'} onClick={()=>pickRef.current?.click()} onDragOver={e=>{e.preventDefault();setDragging(true)}} onDragLeave={()=>setDragging(false)} onDrop={e=>{e.preventDefault();setDragging(false);choose(e.dataTransfer.files?.[0])}} className={`flex w-full flex-col items-center justify-center gap-1.5 rounded-xl border-2 border-dashed px-4 py-5 text-center transition ${dragging?'border-[#17647a] bg-[#eef8f6]':'border-[#c8dcdc] bg-white hover:border-[#86c9c5] hover:bg-[#f6fbfa]'}`}>
+        <FileText size={22} className="text-[#3c7c8d]"/>
+        {file?<><span className="max-w-full truncate text-sm font-semibold text-[#31535e]" data-testid="text-selected-file">{file.name}</span><span className="text-[11px] text-[#81969b]">{(file.size/1024).toFixed(0)} KB · tap to choose a different file</span></>:<><span className="text-sm font-semibold text-[#31535e]">Tap to choose a file</span><span className="text-[11px] text-[#81969b]">PDF, PNG, JPG or WebP · up to 5 MB{' · '}or drag it here</span></>}
+      </button>
+      <button type="button" onClick={()=>cameraRef.current?.click()} className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#dce8e8] bg-white px-3 text-xs font-semibold text-[#397d7e] hover:bg-[#f3f9f8]">📷 Take a photo instead</button>
+      <label className="block text-xs font-semibold text-[#526f77]">{rx?'Title':'What test is this?'}<input data-testid={rx?'input-prescription-title':'input-lab-title'} value={title} onChange={e=>setTitle(e.target.value)} maxLength={120} placeholder={rx?'e.g. Prescription – Oct 28 check-up':'e.g. CBC, Fasting blood sugar'} className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal"/></label>
+      {error&&<p role="alert" data-testid="status-lab-upload-error" className="text-xs text-red-700">{error}</p>}
+      <div className="flex justify-end gap-2"><button type="button" onClick={reset} className="h-9 rounded-lg px-3 text-xs font-semibold text-[#6b8389]">Cancel</button><button data-testid={rx?'button-upload-prescription':'button-upload-lab'} disabled={upload.isPending||!file} className="h-9 rounded-lg bg-[#17647a] px-3 text-xs font-semibold text-white disabled:opacity-50">{upload.isPending?'Uploading…':'Upload'}</button></div>
+    </form>}
+    {canUpload&&!open&&error&&<p role="alert" className="mx-5 mt-3 text-xs text-red-700 sm:mx-6">{error}</p>}
+    {labs.isLoading?<ListSkeleton/>:labs.isError?<ErrorState retry={()=>labs.refetch()}/>:list.length===0&&canUpload&&!open?<button type="button" data-testid={rx?'button-empty-prescription-upload':'button-empty-lab-upload'} onClick={()=>setOpen(true)} className="m-5 flex w-[calc(100%-2.5rem)] flex-col items-center gap-2 rounded-2xl border-2 border-dashed border-[#c8dcdc] px-5 py-8 text-center transition hover:border-[#86c9c5] hover:bg-[#f6fbfa] sm:mx-6 sm:w-[calc(100%-3rem)]"><span className="grid h-11 w-11 place-items-center rounded-2xl bg-[#e8f5f2] text-[#358f88]"><Plus size={20}/></span><span className="text-sm font-semibold text-[#31535e]">{label}</span><span className="max-w-sm text-xs leading-5 text-[#83989e]">{rx?'Add a scanned or photographed prescription for the patient to view and keep.':'Add a photo or PDF of a laboratory result for this patient’s record.'}</span></button>:list.length===0?<EmptyState title={rx?'No prescription files yet':'No lab results yet'} body={rx?(canUpload?'Upload a scanned or photographed prescription for the patient to view and keep.':'Prescriptions your doctor uploads will appear here.'):canUpload?'Upload a photo or PDF of a laboratory result for the care team to review.':'Lab results uploaded by the patient will appear here.'} icon={FileText}/>:<div className="divide-y divide-[#edf2f2]">{list.map(l=><div key={l.id} data-testid={`row-lab-${l.id}`} className="px-5 py-4 sm:px-6"><div className="flex flex-wrap items-center gap-3"><div className="grid h-9 w-9 place-items-center rounded-lg bg-[#eaf3f5] text-[#477f8e]"><FileText size={16}/></div><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-[#31535e]">{l.title}</div><div className="text-[11px] text-[#81969b]">{l.fileName} · {(l.sizeBytes/1024).toFixed(0)} KB · {l.uploadedByName} · {new Date(l.createdAt).toLocaleDateString()}</div></div><a href={`/api/lab-results/${l.id}/file`} onClick={nativeDownload(`/api/lab-results/${l.id}/file`,l.fileName)} target="_blank" rel="noreferrer" data-testid={`link-lab-file-${l.id}`} className="inline-flex h-8 items-center gap-1.5 rounded-lg border border-[#dce8e8] px-2.5 text-[11px] font-semibold text-[#52747c] hover:bg-[#f4f8f8]"><Download size={13}/>Open</a></div>
       {rx?null:l.reviewComment?<div className="mt-2 rounded-lg bg-[#eef8f4] px-3 py-2 text-xs text-[#37796b]"><b>{l.reviewedByName}:</b> {l.reviewComment}</div>:canReview?<form onSubmit={e=>{e.preventDefault();const c=(comment[l.id]||'').trim();if(c)review.mutate({id:l.id,data:{comment:c}},{onSuccess:refresh})}} className="mt-2 flex gap-2"><input data-testid={`input-lab-review-${l.id}`} value={comment[l.id]||''} onChange={e=>setComment({...comment,[l.id]:e.target.value})} placeholder="Add your review…" className="h-9 flex-1 rounded-lg border border-input px-3 text-xs"/><button disabled={review.isPending} className="h-9 rounded-lg bg-[#17647a] px-3 text-xs font-semibold text-white">Save review</button></form>:<div className="mt-2 text-[11px] text-[#99702f]">Waiting for the doctor’s review</div>}</div>)}</div>}
   </Card>;
 }
@@ -1034,7 +1230,7 @@ function AppointmentsPanel({user,patientId}:{user:AuthUser;patientId?:number}){
   const upcoming=list.filter(a=>a.status==='scheduled'),past=list.filter(a=>a.status!=='scheduled');
   const refresh=()=>qc.invalidateQueries({queryKey:getListAppointmentsQueryKey()});
   const submit=(e:FormEvent)=>{e.preventDefault();setError('');create.mutate({data:{patientId:Number(pid),scheduledAt:new Date(when).toISOString(),reason}},{onSuccess:()=>{setWhen('');setReason('');refresh()},onError:err=>setError(apiError(err,'Could not schedule.'))})};
-  const row=(a:Appointment)=><div key={a.id} data-testid={`row-appointment-${a.id}`} className="flex flex-wrap items-center gap-3 px-5 py-3 sm:px-6"><div className="grid h-9 w-9 place-items-center rounded-lg bg-[#eef5fa] text-[#366a7d]"><CalendarDays size={16}/></div><div className="min-w-0 flex-1"><div className="text-sm font-semibold text-[#31535e]">{new Date(a.scheduledAt).toLocaleString([],{weekday:'short',month:'short',day:'numeric',hour:'numeric',minute:'2-digit'})}{!patientId&&<span className="font-normal text-[#81969b]"> · {a.patientName}</span>}</div><div className="truncate text-xs text-[#81969b]">{a.reason}{a.providerName?` · ${a.providerName}`:''}</div></div>{a.status!=='scheduled'?<StatusPill status={a.status==='completed'?'taken':'skipped'}/>:canManage&&<div className="flex gap-1.5"><button onClick={()=>update.mutate({id:a.id,data:{status:'completed'}},{onSuccess:refresh})} className="rounded-lg border border-[#dce8e8] px-2.5 py-1.5 text-[11px] font-semibold text-[#2f8a74] hover:bg-[#eef8f4]">Done</button><button onClick={()=>{if(window.confirm('Cancel this check-up?'))update.mutate({id:a.id,data:{status:'cancelled'}},{onSuccess:refresh})}} className="rounded-lg border border-[#dce8e8] px-2.5 py-1.5 text-[11px] font-semibold text-[#a75848] hover:bg-red-50">Cancel</button></div>}</div>;
+  const row=(a:Appointment)=><div key={a.id} data-testid={`row-appointment-${a.id}`} className="flex flex-wrap items-center gap-3 px-5 py-3 sm:px-6"><div className="grid h-9 w-9 place-items-center rounded-lg bg-[#eef5fa] text-[#366a7d]"><CalendarDays size={16}/></div><div className="min-w-0 flex-1"><div className="text-sm font-semibold text-[#31535e]">{dateTimeLabel(a.scheduledAt,{weekday:'short',month:'short',day:'numeric'})}{!patientId&&<span className="font-normal text-[#81969b]"> · {a.patientName}</span>}</div><div className="truncate text-xs text-[#81969b]">{a.reason}{a.providerName?` · ${a.providerName}`:''}</div></div>{a.status!=='scheduled'?<StatusPill status={a.status==='completed'?'taken':'skipped'}/>:canManage&&<div className="flex gap-1.5"><button onClick={()=>update.mutate({id:a.id,data:{status:'completed'}},{onSuccess:refresh})} className="rounded-lg border border-[#dce8e8] px-2.5 py-1.5 text-[11px] font-semibold text-[#2f8a74] hover:bg-[#eef8f4]">Done</button><button onClick={()=>{if(window.confirm('Cancel this check-up?'))update.mutate({id:a.id,data:{status:'cancelled'}},{onSuccess:refresh})}} className="rounded-lg border border-[#dce8e8] px-2.5 py-1.5 text-[11px] font-semibold text-[#a75848] hover:bg-red-50">Cancel</button></div>}</div>;
   return <Card testId="panel-appointments"><div className="border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><h2 className="font-bold text-[#254954]">Follow-up check-ups</h2><p className="mt-1 text-xs text-[#81969b]">Reminders are sent a day before</p></div>
     {canManage&&<form onSubmit={submit} className="grid gap-2 border-b border-[#eaf0f0] bg-[#f8fbfb] p-4 sm:grid-cols-[1fr_1fr_1.4fr_auto] sm:px-6">{!patientId&&<select data-testid="select-appointment-patient" required value={pid} onChange={e=>setPid(e.target.value)} className="h-9 rounded-lg border border-input bg-white px-2 text-xs"><option value="" disabled>Patient</option>{(patients.data||[]).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select>}<input data-testid="input-appointment-when" type="datetime-local" min={dateTimeNow()} required value={when} onChange={e=>{if(e.target.value>=dateTimeNow())setWhen(e.target.value)}} className="h-9 rounded-lg border border-input bg-white px-2 text-xs"/><input data-testid="input-appointment-reason" required maxLength={200} value={reason} onChange={e=>setReason(e.target.value)} placeholder="Reason, e.g. BP follow-up" className={`h-9 rounded-lg border border-input bg-white px-2 text-xs ${patientId?'sm:col-span-2':''}`}/><button data-testid="button-create-appointment" disabled={create.isPending} className="h-9 rounded-lg bg-[#17647a] px-3 text-xs font-semibold text-white disabled:opacity-50">Schedule</button>{error&&<p className="text-xs text-red-700 sm:col-span-4">{error}</p>}</form>}
     {appts.isLoading?<ListSkeleton/>:list.length===0?<EmptyState title="No check-ups" body={canManage?'Schedule a follow-up above.':'Your doctor will schedule your next check-up here.'} icon={CalendarDays}/>:<div className="divide-y divide-[#edf2f2]">{upcoming.map(row)}{past.slice(-5).reverse().map(row)}</div>}
@@ -1071,8 +1267,9 @@ function DigitalPrescription({patientId}:{patientId:number}){
     <div className="flex flex-wrap items-start justify-between gap-3 border-b-2 border-[#17647a] bg-[#f4f9f9] px-5 py-4 sm:px-6"><div className="flex items-center gap-3"><div className="grid h-11 w-11 place-items-center rounded-xl bg-[#17647a] font-serif text-2xl font-bold text-white">℞</div><div><div className="text-lg font-extrabold text-[#173d4a]">Prescription</div><div className="text-xs text-[#5f7d83]">CareTrack digital prescription · {new Date().toLocaleDateString(undefined,{year:'numeric',month:'long',day:'numeric'})}</div></div></div><button data-testid="button-print-prescription" onClick={()=>window.print()} className="no-print inline-flex h-9 items-center gap-2 rounded-lg border border-[#c8e2df] bg-white px-3 text-xs font-semibold text-[#247b79] hover:bg-[#eef9f6]"><Download size={14}/> Print / save as PDF</button></div>
     {p&&<div className="grid gap-3 border-b border-[#eaf0f0] px-5 py-3 text-xs sm:grid-cols-4 sm:px-6"><Info label="Patient" value={p.name}/><Info label="Age / Sex" value={`${p.age} / ${p.sex.replace('_',' ')}`}/><Info label="Allergies" value={p.allergies?.join(', ')||'None recorded'}/><Info label="Doctor" value={doctors.join(', ')||p.assignedProviderName||'—'}/></div>}
     {meds.isLoading?<ListSkeleton/>:list.length===0?<EmptyState title="No active prescriptions" body="Medicines your doctor prescribes will appear here." icon={Pill}/>:<ol className="divide-y divide-[#edf2f2]">{list.map((m,i)=><li key={m.id} data-testid={`rx-item-${m.id}`} className="px-5 py-4 sm:px-6"><div className="flex flex-wrap items-baseline gap-x-2"><span className="text-xs font-bold text-[#8ba0a4]">{i+1}.</span><span className="text-base font-bold text-[#173d4a]">{m.name}</span><span className="text-sm font-semibold text-[#31535e]">{m.dosage}</span><span className="text-xs text-[#81969b]">{m.form}</span></div>
-      <div className="mt-1.5 pl-5 text-sm text-[#31535e]"><span className="font-semibold text-[#17647a]">Sig:</span> Take {m.dosage} {FREQ_TEXT(m)}{m.scheduleTimes?.length?` at ${m.scheduleTimes.join(', ')}`:''}{m.endDate?` for ${Math.round((new Date(m.endDate).getTime()-new Date(m.startDate).getTime())/86_400_000)+1} days`:''}.</div>
+      <div className="mt-1.5 pl-5 text-sm text-[#31535e]"><span className="font-semibold text-[#17647a]">Sig:</span> Take {m.dosage} {FREQ_TEXT(m)}{m.scheduleTimes?.length?` at ${m.scheduleTimes.map(clock12).join(', ')}`:''}{m.endDate?` for ${Math.round((new Date(m.endDate).getTime()-new Date(m.startDate).getTime())/86_400_000)+1} days`:''}.</div>
       {m.instructions&&<div className="mt-1 pl-5 text-xs italic text-[#5f7d83]">{m.instructions}</div>}
+      {m.sideEffects&&<div data-testid={`rx-side-effects-${m.id}`} className="ml-5 mt-2 rounded-lg border border-[#f0dfb8] bg-[#fdf7ea] px-3 py-2 text-xs leading-5 text-[#7a5a1c]"><b>Side effects to watch for:</b> <span className="whitespace-pre-line">{m.sideEffects}</span></div>}
       <div className="mt-1 pl-5 text-[11px] text-[#91a4a8]">From {m.startDate}{m.endDate?` to ${m.endDate}`:' (ongoing)'}{m.prescribedByName?` · Prescribed by ${m.prescribedByName}`:''}</div></li>)}</ol>}
     {ended.length>0&&<div className="no-print border-t border-[#eaf0f0] px-5 py-3 text-[11px] text-[#91a4a8] sm:px-6">Past or stopped: {ended.map(m=>`${m.name} ${m.dosage}`).join(' · ')}</div>}
     <div className="border-t border-[#eaf0f0] px-5 py-3 text-[10px] leading-4 text-[#91a4a8] sm:px-6">Generated from the medication schedule entered by the care team. For a signed paper prescription, see the files your doctor uploaded.</div>
@@ -1177,7 +1374,7 @@ function HealthMetricsPanel({patientId,canRecord}:{patientId:number;canRecord:bo
     if(!list.length&&!note.trim()){setFeedback({ok:false,text:'Add at least one symptom or a note.'});return}
     createLog.mutate({patientId,data:{symptoms:list,...(note.trim()?{notes:note.trim()}:{})}},{onSuccess:(result)=>{setSymptoms('');setNote('');saved(result,'Symptom note');qc.invalidateQueries({queryKey:getListHealthLogsQueryKey(patientId)})},onError:failed});
   };
-  const when=(value:string)=>new Date(value).toLocaleString([],{month:'short',day:'numeric',hour:'numeric',minute:'2-digit'});
+  const when=(value:string)=>dateTimeLabel(value);
   const inputClass='h-10 rounded-xl border border-[#dce7e7] bg-white px-3 text-sm';
   return <Card testId="panel-health"><div className="grid gap-5 p-5 lg:grid-cols-[1fr_280px] lg:p-6">
     <div><div className="flex flex-wrap items-center justify-between gap-3"><div><h2 className="font-bold text-[#254954]">Health metrics</h2><p className="mt-1 text-xs text-[#81969b]">Home measurements and trend history</p></div>
@@ -1215,7 +1412,7 @@ function MyHealthPage({user}:{user:AuthUser}){
   </div>;
 }
 function Info({label,value}:{label:string;value:string}){return <div><div className="text-[10px] font-bold uppercase tracking-wider text-[#8ba0a4]">{label}</div><div data-testid={`text-patient-${label.toLowerCase().replaceAll(' ','-')}`} className="mt-1 text-sm font-medium leading-5 text-[#3d5e67]">{value}</div></div>}
-function MedicationMini({med}:{med:Medication}){return <div data-testid={`card-patient-medication-${med.id}`} className="flex items-center gap-3 rounded-xl bg-[#f5f9f8] p-3"><div className="grid h-9 w-9 place-items-center rounded-lg bg-[#e2f2ee] text-[#39847e]"><Pill size={17}/></div><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-[#355761]">{med.name}</div><div className="mt-0.5 text-xs text-[#80969b]">{med.dosage} · {med.scheduleTimes.join(', ')||med.frequency.replace('_',' ')}</div></div></div>}
+function MedicationMini({med}:{med:Medication}){return <div data-testid={`card-patient-medication-${med.id}`} className="flex items-center gap-3 rounded-xl bg-[#f5f9f8] p-3"><div className="grid h-9 w-9 place-items-center rounded-lg bg-[#e2f2ee] text-[#39847e]"><Pill size={17}/></div><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-[#355761]">{med.name}</div><div className="mt-0.5 text-xs text-[#80969b]">{med.dosage} · {med.scheduleTimes.map(clock12).join(', ')||med.frequency.replace('_',' ')}</div>{med.sideEffects&&<div className="mt-1 text-[11px] leading-4 text-[#99702f]"><b>Side effects:</b> {med.sideEffects}</div>}</div></div>}
 function DetailSkeleton(){return <div data-testid="status-loading" className="space-y-5"><div className="h-32 animate-pulse rounded-3xl bg-[#dfeceb]"/><div className="grid gap-5 sm:grid-cols-2"><div className="h-80 animate-pulse rounded-2xl bg-white"/><div className="h-80 animate-pulse rounded-2xl bg-white"/></div></div>}
 
 function MedicationsPage({user}:{user:AuthUser}){
@@ -1237,28 +1434,35 @@ function MedicationRow({med,patientName,editable,onEdit}:{med:Medication;patient
   const [message,setMessage]=useState('');
   const toggle=()=>{update.mutate({id:med.id,data:{active:!med.active}},{onSuccess:()=>{qc.invalidateQueries({queryKey:getListMedicationsQueryKey()});setMessage(med.active?'Schedule deactivated':'Schedule activated')},onError:()=>setMessage('Could not update schedule')})};
   const del=()=>{if(window.confirm(`Permanently delete ${med.name}?`))remove.mutate({id:med.id},{onSuccess:()=>qc.invalidateQueries({queryKey:getListMedicationsQueryKey()}),onError:()=>setMessage('Could not remove schedule')})};
-  return <div data-testid={`row-medication-${med.id}`} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:gap-4 sm:px-6"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e8f4f1] text-[#39847e]"><Pill size={19}/></div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-bold text-[#31535e]" data-testid={`text-medication-name-${med.id}`}>{med.name}</span><StatusPill status={med.active?'active':'inactive'}/></div><div className="mt-1 flex flex-wrap gap-x-3 text-xs text-[#81969b]"><span>{med.dosage} · {med.form||'Medication'}</span><span>{patientName}</span><span>{med.frequency==='every_hours'?`Every ${med.intervalHours||'?'} hours`:med.frequency==='specific_days'?`${med.daysOfWeek?.length||0} days per week`:`${med.timesPerDay}× daily`}</span><span>{med.scheduleTimes?.join(', ')}</span></div></div><div className="flex items-center gap-2 pl-[52px] sm:pl-0">{message&&<span className="text-[11px] text-[#448279]">{message}</span>}{editable&&<><button data-testid={`button-edit-medication-${med.id}`} onClick={onEdit} className="rounded-lg border border-[#dce8e8] px-3 py-2 text-xs font-semibold text-[#52737c] hover:bg-[#f5f9f9]">Edit</button><button data-testid={`button-toggle-medication-${med.id}`} disabled={update.isPending} onClick={toggle} className="rounded-lg px-3 py-2 text-xs font-semibold text-[#71868c] hover:bg-[#f3f7f7]">{med.active?'Deactivate':'Activate'}</button>{!med.active&&<button data-testid={`button-delete-medication-${med.id}`} disabled={remove.isPending} onClick={del} className="rounded-lg px-2 py-2 text-xs font-semibold text-[#a85a50] hover:bg-red-50">Delete</button>}</>}</div></div>;
+  return <div data-testid={`row-medication-${med.id}`} className="flex flex-col gap-3 px-5 py-4 sm:flex-row sm:items-center sm:gap-4 sm:px-6"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e8f4f1] text-[#39847e]"><Pill size={19}/></div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-bold text-[#31535e]" data-testid={`text-medication-name-${med.id}`}>{med.name}</span><StatusPill status={med.active?'active':'inactive'}/></div><div className="mt-1 flex flex-wrap gap-x-3 text-xs text-[#81969b]"><span>{med.dosage} · {med.form||'Medication'}</span><span>{patientName}</span><span>{med.frequency==='every_hours'?`Every ${med.intervalHours||'?'} hours`:med.frequency==='specific_days'?`${med.daysOfWeek?.length||0} days per week`:`${med.timesPerDay}× daily`}</span><span>{med.scheduleTimes?.map(clock12).join(', ')}</span></div>{med.sideEffects&&<div data-testid={`text-medication-side-effects-${med.id}`} className="mt-1.5 text-[11px] leading-4 text-[#99702f]"><b>Side effects to watch for:</b> {med.sideEffects}</div>}</div><div className="flex items-center gap-2 pl-[52px] sm:pl-0">{message&&<span className="text-[11px] text-[#448279]">{message}</span>}{editable&&<><button data-testid={`button-edit-medication-${med.id}`} onClick={onEdit} className="rounded-lg border border-[#dce8e8] px-3 py-2 text-xs font-semibold text-[#52737c] hover:bg-[#f5f9f9]">Edit</button><button data-testid={`button-toggle-medication-${med.id}`} disabled={update.isPending} onClick={toggle} className="rounded-lg px-3 py-2 text-xs font-semibold text-[#71868c] hover:bg-[#f3f7f7]">{med.active?'Deactivate':'Activate'}</button>{!med.active&&<button data-testid={`button-delete-medication-${med.id}`} disabled={remove.isPending} onClick={del} className="rounded-lg px-2 py-2 text-xs font-semibold text-[#a85a50] hover:bg-red-50">Delete</button>}</>}</div></div>;
 }
 /** End date from an explicit date, or from a course length counted from the start date. */
 function courseEnd(start:string,end:string,days:number){if(end)return end;if(!days)return null;const d=new Date(`${start}T12:00:00`);d.setDate(d.getDate()+days-1);return d.toLocaleDateString('en-CA')}
 function MedicationModal({medication,patients,defaultPatientId,onClose}:{medication:Medication|null;patients:Patient[];defaultPatientId?:number;onClose:()=>void}){
   const create=useCreateMedication(), update=useUpdateMedication(), qc=useQueryClient();
   const [error,setError]=useState('');
-  const submit=(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const f=new FormData(e.currentTarget);const freq=String(f.get('frequency')) as 'daily'|'specific_days'|'every_hours';const times=String(f.get('scheduleTimes')||'').split(',').map(x=>x.trim()).filter(Boolean);const data={patientId:Number(f.get('patientId')),name:String(f.get('name')),dosage:String(f.get('dosage')),form:String(f.get('form')||''),frequency:freq,timesPerDay:Number(f.get('timesPerDay')||times.length||1),scheduleTimes:times,daysOfWeek:freq==='specific_days'?String(f.get('days')||'').split(',').map(Number).filter(n=>n>=0&&n<=6):[],intervalHours:freq==='every_hours'?Number(f.get('intervalHours')):null,startDate:String(f.get('startDate')||dateToday()),endDate:courseEnd(String(f.get('startDate')||dateToday()),String(f.get('endDate')||''),Number(f.get('courseDays')||0)),instructions:String(f.get('instructions')||'')};
-    const done=()=>{qc.invalidateQueries({queryKey:getListMedicationsQueryKey()});qc.invalidateQueries({queryKey:getListDosesQueryKey()});qc.invalidateQueries({predicate:q=>String(q.queryKey[0]).includes('medication-progress')});onClose()};
-    if(medication){const {patientId,...patch}=data;void patientId;update.mutate({id:medication.id,data:patch},{onSuccess:done,onError:()=>setError('Could not save this schedule. Check the details and try again.')})}
-    else create.mutate({data},{onSuccess:done,onError:()=>setError('Could not create this schedule. Check the details and try again.')});
+  const submit=(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();setError('');const f=new FormData(e.currentTarget);const freq=String(f.get('frequency')) as 'daily'|'specific_days'|'every_hours';
+    // Times are typed in 12-hour form ("8:00 AM, 8:00 PM"); they are stored as "08:00", "20:00".
+    const {times,invalid}=parseClockList(String(f.get('scheduleTimes')||''));
+    if(invalid.length){setError(`Check the scheduled time${invalid.length===1?'':'s'}: ${invalid.join(', ')}. Use a format like 8:00 AM or 8:30 PM.`);return}
+    if(!times.length){setError('Add at least one scheduled time, for example 8:00 AM.');return}
+    const sideEffects=String(f.get('sideEffects')||'').trim();
+    const data={patientId:Number(f.get('patientId')),name:String(f.get('name')),dosage:String(f.get('dosage')),form:String(f.get('form')||''),frequency:freq,timesPerDay:Number(f.get('timesPerDay')||times.length||1),scheduleTimes:times,daysOfWeek:freq==='specific_days'?String(f.get('days')||'').split(',').map(Number).filter(n=>n>=0&&n<=6):[],intervalHours:freq==='every_hours'?Number(f.get('intervalHours')):null,startDate:String(f.get('startDate')||dateToday()),endDate:courseEnd(String(f.get('startDate')||dateToday()),String(f.get('endDate')||''),Number(f.get('courseDays')||0)),instructions:String(f.get('instructions')||'')};
+    const done=()=>{qc.invalidateQueries({queryKey:getListMedicationsQueryKey()});qc.invalidateQueries({queryKey:getListDosesQueryKey()});qc.invalidateQueries({predicate:q=>String(q.queryKey[0]).includes('medication-progress')||String(q.queryKey[0]).startsWith('/api/patients/')});onClose()};
+    if(medication){const {patientId,...patch}=data;void patientId;update.mutate({id:medication.id,data:{...patch,sideEffects:sideEffects||null}},{onSuccess:done,onError:()=>setError('Could not save this schedule. Check the details and try again.')})}
+    else create.mutate({data:{...data,...(sideEffects?{sideEffects}:{})}},{onSuccess:done,onError:()=>setError('Could not create this schedule. Check the details and try again.')});
   };
   const busy=create.isPending||update.isPending;
   return <Modal title={medication?'Edit medication schedule':'Create medication schedule'} subtitle="Set a routine that’s clear for the patient and their care team." onClose={onClose}><form onSubmit={submit} className="space-y-4">
     <label className="block text-xs font-semibold text-[#526f77]">Patient<select required name="patientId" defaultValue={medication?.patientId||defaultPatientId||''} disabled={!!medication} className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal"><option value="" disabled>Select a patient</option>{patients.filter(p=>p.active).map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
     <div className="grid gap-4 sm:grid-cols-2"><Field label="Medication name" name="name" required defaultValue={medication?.name}/><Field label="Dosage" name="dosage" required defaultValue={medication?.dosage} placeholder="e.g. 10 mg"/></div>
     <div className="grid gap-4 sm:grid-cols-2"><Field label="Form" name="form" defaultValue={medication?.form} placeholder="Tablet, capsule…"/><label className="block text-xs font-semibold text-[#526f77]">Frequency<select name="frequency" defaultValue={medication?.frequency||'daily'} className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal"><option value="daily">Daily</option><option value="specific_days">Specific days</option><option value="every_hours">Every few hours</option></select></label></div>
-    <div className="grid gap-4 sm:grid-cols-2"><Field label="Scheduled times" name="scheduleTimes" defaultValue={medication?.scheduleTimes?.join(', ')||'08:00'} placeholder="08:00, 20:00"/><Field label="Times per day" name="timesPerDay" type="number" defaultValue={medication?.timesPerDay||1}/></div>
+    <div className="grid gap-4 sm:grid-cols-2"><Field label="Scheduled times (12-hour, comma separated)" name="scheduleTimes" defaultValue={medication?.scheduleTimes?.length?medication.scheduleTimes.map(clock12).join(', '):'8:00 AM'} placeholder="8:00 AM, 8:00 PM"/><Field label="Times per day" name="timesPerDay" type="number" defaultValue={medication?.timesPerDay||1}/></div>
     <div className="grid gap-4 sm:grid-cols-2"><Field label="Days of week (0=Sun, comma separated)" name="days" defaultValue={medication?.daysOfWeek?.join(',')||''}/><Field label="Interval hours (if applicable)" name="intervalHours" type="number" defaultValue={medication?.intervalHours||''}/></div>
     <div className="grid gap-4 sm:grid-cols-2"><Field label="Start date" name="startDate" type="date" defaultValue={medication?.startDate||dateToday()} min={dateToday()}/><Field label="End date (optional)" name="endDate" type="date" defaultValue={medication?.endDate||''} min={dateToday()}/></div>
     {!medication&&<label className="block text-xs font-semibold text-[#526f77]">Course length<select name="courseDays" defaultValue="0" className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal"><option value="0">Ongoing, or use the end date above</option>{[3,5,7,10,14,21,30].map(d=><option key={d} value={d}>{d} days</option>)}</select><span className="mt-1 block font-normal text-[#8ba0a4]">A fixed course shows a day-by-day progress bar.</span></label>}
     <label className="block text-xs font-semibold text-[#526f77]">Instructions<textarea name="instructions" defaultValue={medication?.instructions||''} rows={2} className="mt-1.5 w-full rounded-lg border border-input bg-white px-3 py-2 text-sm font-normal outline-none focus:border-primary"/></label>
+    <label className="block text-xs font-semibold text-[#526f77]">Side effects to watch for (optional)<textarea data-testid="input-sideEffects" name="sideEffects" defaultValue={medication?.sideEffects||''} rows={3} maxLength={2000} placeholder="Enter from the product information or your clinical judgment, e.g. what to watch for and when to call" className="mt-1.5 w-full rounded-lg border border-input bg-white px-3 py-2 text-sm font-normal outline-none focus:border-primary"/><span className="mt-1 block font-normal text-[#8ba0a4]">Shown to the patient and care team with this medication. CareTrack never fills this in automatically.</span></label>
     {error&&<div role="alert" data-testid="status-medication-form-error" className="text-xs text-red-700">{error}</div>}<ModalActions onClose={onClose} busy={busy} submitLabel={medication?'Save schedule':'Create schedule'}/>
   </form></Modal>;
 }
@@ -1390,7 +1594,7 @@ function AuditPage(){
   </div>;
 }
 function AuditRow({log}:{log:AuditLog}){
-  return <div data-testid={`row-audit-log-${log.id}`} className="flex items-start gap-3 px-5 py-4 sm:px-6"><div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#edf4f4] text-[#64868a]"><Activity size={16}/></div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-bold text-[#355661]" data-testid={`text-audit-action-${log.id}`}>{log.action.replaceAll('_',' ')}</span><span className="rounded-full bg-[#f1f6f6] px-2 py-0.5 text-[10px] capitalize text-[#71898e]">{log.entityType}{log.entityId?` · #${log.entityId}`:''}</span></div><div className="mt-1 text-xs text-[#82979b]">{log.userName||'System'} · {new Date(log.createdAt).toLocaleString()}</div>{Object.keys(log.details||{}).length>0&&<details className="mt-2"><summary data-testid={`button-audit-details-${log.id}`} className="cursor-pointer text-[11px] font-semibold text-[#42817f]">View event details</summary><pre data-testid={`text-audit-details-${log.id}`} className="mt-2 max-w-full overflow-x-auto rounded-lg bg-[#f5f8f8] p-3 text-[10px] leading-4 text-[#60797f]">{JSON.stringify(log.details,null,2)}</pre></details>}</div></div>;
+  return <div data-testid={`row-audit-log-${log.id}`} className="flex items-start gap-3 px-5 py-4 sm:px-6"><div className="mt-0.5 grid h-9 w-9 shrink-0 place-items-center rounded-xl bg-[#edf4f4] text-[#64868a]"><Activity size={16}/></div><div className="min-w-0 flex-1"><div className="flex flex-wrap items-center gap-2"><span className="text-sm font-bold text-[#355661]" data-testid={`text-audit-action-${log.id}`}>{log.action.replaceAll('_',' ')}</span><span className="rounded-full bg-[#f1f6f6] px-2 py-0.5 text-[10px] capitalize text-[#71898e]">{log.entityType}{log.entityId?` · #${log.entityId}`:''}</span></div><div className="mt-1 text-xs text-[#82979b]">{log.userName||'System'} · {dateTimeLabel(log.createdAt,{year:'numeric',month:'short',day:'numeric'})}</div>{Object.keys(log.details||{}).length>0&&<details className="mt-2"><summary data-testid={`button-audit-details-${log.id}`} className="cursor-pointer text-[11px] font-semibold text-[#42817f]">View event details</summary><pre data-testid={`text-audit-details-${log.id}`} className="mt-2 max-w-full overflow-x-auto rounded-lg bg-[#f5f8f8] p-3 text-[10px] leading-4 text-[#60797f]">{JSON.stringify(log.details,null,2)}</pre></details>}</div></div>;
 }
 
 function Field({label,name,type='text',required=false,defaultValue,placeholder,minLength,min}:{label:string;name:string;type?:string;required?:boolean;defaultValue?:string|number;placeholder?:string;minLength?:number;min?:string}){

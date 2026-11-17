@@ -47,6 +47,7 @@ export function serializeMedication(
     startDate: medication.startDate,
     endDate: medication.endDate,
     instructions: medication.instructions,
+    sideEffects: medication.sideEffects ?? null,
     prescribedBy: medication.prescribedBy,
     prescribedByName,
     active: medication.active,

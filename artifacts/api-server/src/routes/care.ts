@@ -29,6 +29,7 @@ import { writeAuditLog } from "../lib/audit";
 import { canAccessPatient, canManagePatient, getVisiblePatientIds } from "../lib/patient-access";
 import { careTeamProviderIds } from "../lib/coverage";
 import { decryptBuffer, encryptBuffer } from "../lib/encryption";
+import { fileMatchesType } from "../lib/file-validation";
 import { latestPredictions, HEALTH_TIPS } from "../lib/ml/risk-model";
 import { manilaDate } from "../lib/dose-scheduler";
 import { chatbotRateLimit } from "../lib/rate-limit";
@@ -180,6 +181,10 @@ router.post("/patients/:id/lab-results", async (req, res): Promise<void> => {
   const data = Buffer.from(parsed.data.dataBase64, "base64");
   if (data.length === 0 || data.length > MAX_FILE_BYTES) {
     res.status(400).json({ error: "The file must be smaller than 5 MB." });
+    return;
+  }
+  if (!fileMatchesType(data, parsed.data.mimeType)) {
+    res.status(400).json({ error: "This file doesn't look like a real PDF or image. Choose the original file and try again." });
     return;
   }
   const [lab] = await db

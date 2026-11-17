@@ -109,6 +109,7 @@ router.post(
             ? null
             : calendarDate(parsed.data.endDate),
         instructions: parsed.data.instructions?.trim() || null,
+        sideEffects: parsed.data.sideEffects?.trim() || null,
         prescribedBy: user.id,
       })
       .returning();
@@ -175,6 +176,7 @@ router.patch(
         parsed.data.endDate === null ? null : calendarDate(parsed.data.endDate);
     }
     if (parsed.data.instructions !== undefined) changes.instructions = parsed.data.instructions?.trim() || null;
+    if (parsed.data.sideEffects !== undefined) changes.sideEffects = parsed.data.sideEffects?.trim() || null;
     if (parsed.data.active !== undefined) changes.active = parsed.data.active;
     if (Object.keys(changes).length === 0) {
       res.status(400).json({ error: "Provide at least one field to update." });

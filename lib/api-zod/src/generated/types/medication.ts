@@ -28,6 +28,11 @@ export interface Medication {
   endDate: Date | null;
   /** @nullable */
   instructions: string | null;
+  /**
+     * Side effects to watch for, as entered by the prescribing doctor.
+     * @nullable
+     */
+  sideEffects?: string | null;
   /** @nullable */
   prescribedBy: number | null;
   /** @nullable */

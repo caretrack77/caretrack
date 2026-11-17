@@ -152,6 +152,8 @@ export const medicationsTable = pgTable(
     startDate: date("start_date", { mode: "string" }).notNull(),
     endDate: date("end_date", { mode: "string" }),
     instructions: text("instructions"),
+    /** Side effects to watch for, entered by the prescribing doctor (never generated). */
+    sideEffects: text("side_effects"),
     prescribedBy: integer("prescribed_by").references(() => usersTable.id, {
       onDelete: "set null",
     }),

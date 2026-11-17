@@ -494,6 +494,18 @@ html { -webkit-text-size-adjust: 100%; text-size-adjust: 100%; }
   /* Long words, emails and IDs wrap instead of pushing the page wider. */
   main { overflow-wrap: anywhere; }
 }
+/* ---- Phones in landscape (short screens): keep the header, reminder banner and notification
+   panel compact so most of the screen is left for the page and it still scrolls normally. */
+@media (orientation: landscape) and (max-height: 540px) {
+  .app-header { height: 52px; }
+  .app-below-header { top: 52px; }
+  .notif-panel { top: 58px; max-height: calc(100dvh - 66px); }
+  .notif-head { padding-top: 0.4rem; padding-bottom: 0.4rem; }
+  .notif-item { padding-top: 0.5rem; padding-bottom: 0.5rem; }
+  .dose-alert { top: 58px; left: auto; right: 12px; width: min(420px, 60vw); }
+  .dose-alert-body { padding: 0.5rem 0.625rem; gap: 0.5rem; }
+  .dose-alert-body > div:first-child { display: none; }
+}
 @media (pointer: coarse) {
   button, a, [role="button"], input, select, textarea, label { -webkit-tap-highlight-color: transparent; touch-action: manipulation; }
   /* Comfortable tap sizes for the smallest controls (about 40-44 px). */

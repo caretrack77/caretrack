@@ -668,6 +668,11 @@ export interface Medication {
   endDate: string | null;
   /** @nullable */
   instructions: string | null;
+  /**
+     * Side effects to watch for, as entered by the prescribing doctor.
+     * @nullable
+     */
+  sideEffects?: string | null;
   /** @nullable */
   prescribedBy: number | null;
   /** @nullable */
@@ -805,6 +810,8 @@ export interface MedicationInput {
   /** @nullable */
   endDate?: string | null;
   instructions?: string;
+  /** @maxLength 2000 */
+  sideEffects?: string;
 }
 
 export type MedicationUpdateFrequency = typeof MedicationUpdateFrequency[keyof typeof MedicationUpdateFrequency];
@@ -841,6 +848,11 @@ export interface MedicationUpdate {
   endDate?: string | null;
   /** @nullable */
   instructions?: string | null;
+  /**
+     * @maxLength 2000
+     * @nullable
+     */
+  sideEffects?: string | null;
   active?: boolean;
 }
 

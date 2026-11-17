@@ -97,6 +97,12 @@ router.patch("/doses/:id/status", async (req, res): Promise<void> => {
     return;
   }
   const user = currentUser(res)!;
+  // "I've taken it", "I took it late", "Missed", "Skip" and "Undo" belong to the patient.
+  // Doctors, caregivers and admins can view dose status and adherence, but never change it.
+  if (user.role !== "patient") {
+    res.status(403).json({ error: "Only the patient can update their own dose status." });
+    return;
+  }
   const [existing] = await db
     .select()
     .from(doseLogsTable)
@@ -146,8 +152,8 @@ router.patch("/doses/:id/status", async (req, res): Promise<void> => {
     }
   }
   // Patients may only log doses close to their scheduled time, so the record can't be
-  // tidied up days later. Doctors and admins can still correct any dose.
-  if (user.role === "patient") {
+  // tidied up days later.
+  {
     const offset = actionTime.getTime() - existing.scheduledTime.getTime();
     if (offset > PATIENT_CORRECTION_WINDOW_MS) {
       res.status(403).json({

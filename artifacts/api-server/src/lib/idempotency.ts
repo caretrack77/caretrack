@@ -53,6 +53,7 @@ export async function ensureSchemaAdditions(): Promise<void> {
     ALTER TABLE "caretrack_users" ADD COLUMN IF NOT EXISTS "verified_phone" text;
     ALTER TABLE "caretrack_users" ADD COLUMN IF NOT EXISTS "phone_verified_at" timestamp with time zone;
     ALTER TABLE "caretrack_otp_challenges" ADD COLUMN IF NOT EXISTS "sms_phone" text;
+    ALTER TABLE "caretrack_medications" ADD COLUMN IF NOT EXISTS "side_effects" text;
   `);
 }
 

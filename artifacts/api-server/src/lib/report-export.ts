@@ -15,6 +15,21 @@ import { csvCell } from "./csv-protection";
 
 type ReportRecord = typeof reportsTable.$inferSelect;
 
+/** "08:00" -> "8:00 AM", "20:30" -> "8:30 PM". Stored values stay in 24-hour form. */
+export function clockTime12(value: string): string {
+  const match = /^(\d{1,2}):(\d{2})/.exec(value.trim());
+  if (!match) return value;
+  const hour = Number(match[1]);
+  if (hour > 23) return value;
+  return `${hour % 12 || 12}:${match[2]} ${hour < 12 ? "AM" : "PM"}`;
+}
+/** Date and 12-hour time in the clinic's time zone, e.g. "Nov 18, 2026, 8:00 PM". */
+function manilaDateTime12(value: Date): string {
+  return value.toLocaleString("en-US", {
+    timeZone: "Asia/Manila", year: "numeric", month: "short", day: "numeric", hour: "numeric", minute: "2-digit", hour12: true,
+  });
+}
+
 type StoredAnalytics = {
   totalPatients: number;
   totalDoses: number;
@@ -316,8 +331,11 @@ export async function buildReportPdf(
         `${medication.name} ${medication.dosage} (${medication.form})${medication.active ? "" : "  - inactive"}`,
       );
       doc.font("Helvetica").fontSize(9).fillColor(COLORS.muted).text(
-        `${medication.frequency.replace("_", " ")} at ${medication.scheduleTimes.join(", ") || "08:00"}  |  from ${medication.startDate}${medication.endDate ? ` to ${medication.endDate}` : ""}${medication.instructions ? `  |  ${medication.instructions}` : ""}`,
+        `${medication.frequency.replace("_", " ")} at ${medication.scheduleTimes.map(clockTime12).join(", ") || "8:00 AM"}  |  from ${medication.startDate}${medication.endDate ? ` to ${medication.endDate}` : ""}${medication.instructions ? `  |  ${medication.instructions}` : ""}`,
       );
+      if (medication.sideEffects) {
+        doc.font("Helvetica").fontSize(9).fillColor(COLORS.muted).text(`Side effects to watch for (from the doctor): ${medication.sideEffects}`);
+      }
       doc.moveDown(0.3);
     }
   }
@@ -346,7 +364,7 @@ export async function buildReportPdf(
     for (const row of missedRows) {
       ensureSpace(14);
       doc.font("Helvetica").fontSize(9).fillColor(COLORS.ink).text(
-        `${row.dose.scheduledTime.toISOString().slice(0, 16).replace("T", " ")} UTC  |  ${patient ? "" : `${row.patientName}  |  `}${row.medicationName} ${row.dosage}`,
+        `${manilaDateTime12(row.dose.scheduledTime)}  |  ${patient ? "" : `${row.patientName}  |  `}${row.medicationName} ${row.dosage}`,
       );
     }
   }
