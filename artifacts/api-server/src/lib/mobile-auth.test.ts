@@ -14,6 +14,12 @@ vi.hoisted(() => {
   process.env.CORS_ORIGIN = "https://caretrack.example.com";
 });
 
+// These tests sign in many times from one address; the real sign-in rate limits are not under test here.
+vi.mock("./rate-limit", () => {
+  const pass = (_req: unknown, _res: unknown, next: () => void) => next();
+  return { loginRateLimit: pass, otpRequestRateLimit: pass, otpVerifyRateLimit: pass, passwordRateLimit: pass, chatbotRateLimit: pass };
+});
+
 const store = vi.hoisted(() => ({
   user: null as null | Record<string, unknown>,
   sessions: new Map<string, number>(), // token hash -> user id
@@ -161,5 +167,49 @@ describe("Android app sign-in", () => {
   it("still keeps patient accounts off desktop browsers", async () => {
     const res = await login({ "user-agent": "Mozilla/5.0 (Windows NT 10.0) Chrome/140" });
     expect(res.status).toBe(403);
+  });
+});
+
+// Patients and caregivers: the Android app only. Doctors and admins: a desktop/laptop browser only.
+describe("which device each role may use", () => {
+  const DESKTOP = { "user-agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/140" };
+  const PHONE_BROWSER = { "user-agent": "Mozilla/5.0 (Linux; Android 14; Pixel 7) Chrome/140 Mobile Safari/537.36" };
+  const as = async (role: string, headers: Record<string, string>) => {
+    store.user!.role = role;
+    const res = await login(headers);
+    store.user!.role = "patient";
+    return { status: res.status, code: res.status === 403 ? ((await res.json()) as { code: string }).code : null };
+  };
+
+  for (const role of ["patient", "caregiver"]) {
+    it(`${role}: allowed in the app, refused on desktop and phone browsers`, async () => {
+      expect((await as(role, APP)).status).toBe(200);
+      expect(await as(role, DESKTOP)).toEqual({ status: 403, code: "MOBILE_APP_REQUIRED" });
+      expect(await as(role, PHONE_BROWSER)).toEqual({ status: 403, code: "MOBILE_APP_REQUIRED" });
+    });
+    it(`${role}: a browser can't pretend to be the app`, async () => {
+      // The website adding the app's header still sends its own Origin, or marks the request same-origin.
+      expect(await as(role, { ...PHONE_BROWSER, "x-caretrack-client": "android-app", origin: "https://caretrack.example.com" })).toEqual({ status: 403, code: "MOBILE_APP_REQUIRED" });
+      expect(await as(role, { ...DESKTOP, "x-caretrack-client": "android-app", "sec-fetch-site": "same-origin" })).toEqual({ status: 403, code: "MOBILE_APP_REQUIRED" });
+    });
+  }
+
+  for (const role of ["provider", "admin"]) {
+    it(`${role}: allowed on a desktop browser, refused in the app and on phones`, async () => {
+      expect((await as(role, DESKTOP)).status).toBe(200);
+      expect(await as(role, APP)).toEqual({ status: 403, code: "DESKTOP_REQUIRED" });
+      expect(await as(role, PHONE_BROWSER)).toEqual({ status: 403, code: "DESKTOP_REQUIRED" });
+      expect(await as(role, { "user-agent": "Mozilla/5.0 (iPhone; CPU iPhone OS 18_0 like Mac OS X) Mobile/15E148" })).toEqual({ status: 403, code: "DESKTOP_REQUIRED" });
+    });
+  }
+
+  it("a session can't be moved to a device the role may not use", async () => {
+    store.user!.role = "provider";
+    const res = await login(DESKTOP);
+    const cookie = (res.headers.get("set-cookie") || "").split(";")[0];
+    expect((await fetch(`${base}/api/auth/me`, { headers: { ...DESKTOP, cookie } })).status).toBe(200);
+    const moved = await fetch(`${base}/api/patients`, { headers: { ...PHONE_BROWSER, cookie } });
+    expect(moved.status).toBe(403);
+    store.user!.role = "patient";
   });
 });

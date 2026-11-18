@@ -118,15 +118,15 @@ for building, server setup, installation and testing.
 
 ## Demo accounts
 
-All demo accounts use **`demo1234`** as their password. When two-step login is on, their one-time code is shown on the sign-in screen (it is never emailed: `caretrack.com` is not our domain). New users must change temporary passwords when prompted. Patient and caregiver accounts are blocked on desktop browsers: use a physical phone, Android emulator, or browser device emulation for the defense demonstration. Keep this policy enabled in production.
+All demo accounts use **`demo1234`** as their password. When two-step login is on, their one-time code is shown on the sign-in screen (it is never emailed: `caretrack.com` is not our domain). New users must change temporary passwords when prompted. Each role signs in on one kind of device, enforced by the server: **patients and caregivers only in the CareTrack Android app** (on a phone or an Android emulator), and **doctors and administrators only in a desktop or laptop browser**. Other devices are refused at sign-in and on every request. Keep this policy enabled in production.
 
 | Role | Email | Demo scope |
 |---|---|---|
 | Admin | `admin@caretrack.com` | Sir Reyes, Ryan Michael Lao: user/team management, all patients, audit activity |
 | Doctor | `doctor@caretrack.com` | Dr. Baltazar, Alessa Mikkah and five assigned patients |
 | Doctor | `doctor2@caretrack.com` | Dr. Idago, Gremory Dennis and two assigned patients; also covers Dr. Baltazar's patients in the seed |
-| Patient | `patient@caretrack.com` | Andrade, Francisca Santiago's own schedule and health/adherence views; mobile browser only |
-| Caregiver | `caregiver@caretrack.com` | Jordan Morgan's linked-patient support; mobile browser only |
+| Patient | `patient@caretrack.com` | Andrade, Francisca Santiago's own schedule and health/adherence views; Android app only |
+| Caregiver | `caregiver@caretrack.com` | Jordan Morgan's linked-patient support; Android app only |
 
 The database/API retains the internal role identifier `provider` for doctors. Product-facing roles are Admin, Doctor, Patient, and Caregiver.
 
@@ -220,7 +220,7 @@ This log records additions reflected in the current source, not items that remai
 | Addition | Implementation areas | How to see it |
 |---|---|---|
 | Health metric and symptom recording, ranges, alerts, and seed records | `lib/db/src/schema/caretrack.ts`; `artifacts/api-server/src/routes/health.ts`; `artifacts/api-server/scripts/seed.mjs` | Open the Health page as Francisca (patient) or a linked caregiver; record a reading and review its range/notification behavior. |
-| Caregiver-scoped dose and health recording | `artifacts/api-server/src/routes/doses.ts`; `artifacts/api-server/src/lib/patient-access.ts` | Use the caregiver account on a mobile browser and log an allowed dose or health observation. |
+| Caregiver-scoped health recording; patient-only dose logging | `artifacts/api-server/src/routes/doses.ts`; `artifacts/api-server/src/lib/patient-access.ts` | In the Android app, record a health observation as the caregiver; dose buttons appear only for the patient. |
 | Guarded Groq chatbot and safe fallback | `artifacts/api-server/src/routes/care.ts`; `.env.example` | Ask CareTrack a supported question; try a restricted/off-topic question and compare the fixed response. |
 | Health-informed Random Forest features and confidence | `artifacts/api-server/src/lib/ml/risk-model.ts`; `artifacts/api-server/src/routes/ai.ts`; generated API packages; `artifacts/caretrack/src/App.tsx` | Open AI risk prediction or a patient risk card and inspect confidence and top factors. |
 | Health and AI evidence in PDF/CSV reports | `artifacts/api-server/src/lib/report-export.ts`; `artifacts/api-server/src/lib/report-service.ts`; seeded report data | Generate/download a weekly report for Francisca and inspect health summaries, out-of-range readings, and AI fields where a prediction exists. |
@@ -229,7 +229,7 @@ This log records additions reflected in the current source, not items that remai
 | Medical-history, consultation, prescription, and record-history API routes | `artifacts/api-server/src/routes/clinical.ts`; `artifacts/api-server/src/routes/medications.ts`; `lib/db/src/schema/caretrack.ts` | Exercise documented authenticated routes with an assigned patient; inspect the record-history endpoint as a doctor/admin. Full UI/entity coverage remains incomplete. |
 | Rate limits, privacy consent, security headers, and production-safe OTP behavior | `artifacts/api-server/src/lib/auth.ts`; middleware; `artifacts/api-server/src/lib/security.test.ts`; `.env.example` | Accept the privacy notice on first use; review response headers and rate-limit behavior in a local test deployment. |
 | Native Android app with on-device reminders and bearer-token sign-in | `artifacts/caretrack/android/`; `artifacts/caretrack/capacitor.config.ts`; `artifacts/caretrack/src/native.ts`; `artifacts/caretrack/src/native-notifications.ts`; `artifacts/api-server/src/lib/auth.ts`; `artifacts/api-server/src/app.ts`; `docs/ANDROID.md` | Build and install the APK, sign in as Francisca (patient), then put the phone in airplane mode and wait for a scheduled dose reminder with the app closed. |
-| Future-date checks and mobile-only patient/caregiver policy | API date validation and authentication; `artifacts/caretrack/public/manifest.webmanifest` | Try a patient/caregiver session on a physical phone, Android emulator, or browser device emulation; desktop sign-in is intentionally rejected. |
+| Future-date checks and device policy per role | API date validation; `deviceProblem` in `artifacts/api-server/src/lib/auth.ts` | Sign in as a patient/caregiver in the Android app and as a doctor/admin on a computer; the other combinations are refused. |
 
 ## Already implemented (verified, not new in this change log)
 
@@ -292,7 +292,7 @@ Statuses indicate implementation evidence in this repository; “Partial” mean
 
 ## Known limitations
 
-- An Android APK is available (see [docs/ANDROID.md](docs/ANDROID.md)); it needs the API deployed over HTTPS. Patients and caregivers are blocked from desktop sign-in. Demonstrate on a physical phone, Android emulator, or browser device emulation; do not bypass the production policy.
+- An Android APK is available (see [docs/ANDROID.md](docs/ANDROID.md)); it needs the API deployed over HTTPS. Patients and caregivers can only sign in through the app; doctors and administrators only on a desktop or laptop browser. Demonstrate patient and caregiver features on a physical phone or Android emulator; do not bypass the production policy.
 - In the browser/PWA, local reminders and offline sync depend on browser support and permissions, and closed-app alarm delivery is not guaranteed. Use the Android APK for reliable closed-app reminders (still subject to Android notification and battery-optimization settings).
 - Reminder escalation settings have database defaults, but the staged repeat/caregiver/doctor escalation is not implemented end to end.
 - Medical-history, consultation, prescription, and record-history API/schema work exists, but UI integration and consistent history/soft-delete behavior across every clinical entity still need verification.

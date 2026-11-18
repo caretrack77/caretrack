@@ -47,6 +47,14 @@ const apiError = (err: unknown, fallback: string) => {
   const data = (err as { data?: { error?: unknown } } | null)?.data;
   return typeof data?.error === 'string' ? data.error : fallback;
 };
+/** The server refused this device for the account's role (patients: app only; doctors/admins: computer only). */
+const isDeviceError = (err: unknown) => {
+  const code = (err as { data?: { code?: unknown } } | null)?.data?.code;
+  return code === 'MOBILE_APP_REQUIRED' || code === 'DESKTOP_REQUIRED';
+};
+const DEVICE_HINT = isNativeApp
+  ? 'This app is for patients and caregivers. Doctors and administrators sign in on a computer at the CareTrack website.'
+  : 'Patients and caregivers sign in with the CareTrack Android app. Doctors and administrators sign in here on a computer.';
 /** Landing page for each role: patients start on their doses, everyone else on the overview. */
 /** Removes cached pages and queued doses so the next person on this device sees nothing. */
 const clearOfflineData = () => {
@@ -105,7 +113,7 @@ function LoginPage() {
   const needsServer = isNativeApp && (editServer || !getServerUrl());
   const submit = (e: FormEvent) => {
     e.preventDefault(); setError('');
-    login.mutate({ data: { email: email.trim(), password: password.trim() } }, { onSuccess: (r) => { if (r.otpRequired) { setChallenge(r); setSent(null); setCode(''); } else setLocation('/'); }, onError: (err) => setError(apiError(err, 'We couldn’t sign you in.') + ' Passwords are case-sensitive. Use the eye button to check what you typed.') });
+    login.mutate({ data: { email: email.trim(), password: password.trim() } }, { onSuccess: (r) => { if (r.otpRequired) { setChallenge(r); setSent(null); setCode(''); } else setLocation('/'); }, onError: (err) => setError(isDeviceError(err) ? apiError(err, DEVICE_HINT) : apiError(err, 'We couldn’t sign you in.') + ' Passwords are case-sensitive. Use the eye button to check what you typed.') });
   };
   const send = (channel: 'email'|'sms') => {
     if (!challenge?.challengeId) return; setError('');
@@ -137,7 +145,7 @@ function LoginPage() {
     <section className="flex flex-1 items-center justify-center px-5 py-8 sm:px-10 sm:py-12">
       <div className="w-full max-w-[420px] page-enter">
         {needsServer ? <ServerSetup inputClass={inputClass} cardClass={cardClass} onDone={()=>{setEditServer(false);setError('')}} onCancel={getServerUrl()?()=>setEditServer(false):undefined}/> : <>
-        <div className="mb-6 sm:mb-9"><p className="text-xs font-bold uppercase tracking-[.16em] text-primary">Welcome back</p><h2 className="mt-3 text-2xl font-bold text-[#173d4a] sm:text-3xl">Sign in to CareTrack</h2><p className="mt-2 text-sm text-muted-foreground">Sign in with the account provided by your administrator.</p></div>
+        <div className="mb-6 sm:mb-9"><p className="text-xs font-bold uppercase tracking-[.16em] text-primary">Welcome back</p><h2 className="mt-3 text-2xl font-bold text-[#173d4a] sm:text-3xl">Sign in to CareTrack</h2><p className="mt-2 text-sm text-muted-foreground">Sign in with the account provided by your administrator.</p><p data-testid="text-device-policy" className="mt-3 flex items-start gap-2 rounded-xl border border-[#d9e8e8] bg-white/70 px-3 py-2 text-xs leading-5 text-[#4f6f77]"><ShieldCheck size={14} className="mt-0.5 shrink-0 text-[#25867c]"/>{isNativeApp?'For patients and caregivers. Doctors and administrators sign in on a computer at the CareTrack website.':'For doctors and administrators, on a desktop or laptop. Patients and caregivers use the CareTrack Android app.'}</p></div>
         {!challenge ? <form onSubmit={submit} className={cardClass}>
           <label className="block"><span className="mb-2 block text-sm font-semibold">Email address</span><input data-testid="input-email" type="email" autoComplete="username" required value={email} onChange={e=>setEmail(e.target.value)} className={inputClass} placeholder="you@example.com"/></label>
           <label className="block"><span className="mb-2 block text-sm font-semibold">Password</span><PasswordInput testId="input-password" required value={password} onChange={setPassword} autoComplete="current-password" className={inputClass} placeholder="Enter your password"/></label>

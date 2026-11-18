@@ -44,9 +44,20 @@ const SESSION_LIFETIME_MS = 7 * 24 * 60 * 60 * 1000;
 /** Response header that hands the Android app its session token (it can't use cross-site cookies). */
 export const SESSION_HEADER = "x-caretrack-session";
 
-/** True for the CareTrack Android app, which authenticates with a bearer token instead of a cookie. */
+/** Where the Android app's screens run (Capacitor); its requests to the API come from here. */
+const APP_ORIGINS = new Set(["https://localhost", "capacitor://localhost"]);
+/**
+ * True for the CareTrack Android app, which authenticates with a bearer token instead of a cookie.
+ * The app sends `x-caretrack-client: android-app` from its own origin. A web page could add the
+ * header too, but a browser always sends the page's real Origin (and marks same-site requests),
+ * which a page can't change, so the website can't pass itself off as the app.
+ */
 export function isAppClient(req: Request): boolean {
-  return req.header("x-caretrack-client")?.toLowerCase() === "android-app";
+  if (req.header("x-caretrack-client")?.toLowerCase() !== "android-app") return false;
+  const origin = req.header("origin");
+  if (origin) return APP_ORIGINS.has(origin);
+  const site = req.header("sec-fetch-site")?.toLowerCase();
+  return site !== "same-origin" && site !== "same-site";
 }
 
 /** The session token: the HTTP-only cookie (web) or `Authorization: Bearer` (Android app). */
@@ -107,8 +118,25 @@ export function isMobileClient(req: Request): boolean {
   return Boolean(ua && /(Android|iPhone|iPad|iPod|Mobile)/i.test(ua));
 }
 
-export function rejectsPatientWebDevice(req: Request, role: string): boolean {
-  return (role === "patient" || role === "caregiver") && !isMobileClient(req);
+/**
+ * Which device each role may use:
+ * - patients and caregivers: only the CareTrack Android app (not a desktop or phone browser);
+ * - doctors and administrators: only a desktop or laptop browser (not the app, a phone or a tablet).
+ * Returns why this request's device isn't allowed for the role, or null when it is.
+ */
+export type DeviceProblem = { code: "MOBILE_APP_REQUIRED" | "DESKTOP_REQUIRED"; error: string };
+export function deviceProblem(req: Request, role: string): DeviceProblem | null {
+  if (role === "patient" || role === "caregiver") {
+    return isAppClient(req)
+      ? null
+      : { code: "MOBILE_APP_REQUIRED", error: "Patient and caregiver accounts can only sign in from the CareTrack Android app." };
+  }
+  if (role === "admin" || role === "provider") {
+    return isMobileClient(req)
+      ? { code: "DESKTOP_REQUIRED", error: "Doctor and administrator accounts can only sign in on a desktop or laptop computer, through the CareTrack website." }
+      : null;
+  }
+  return null;
 }
 
 export function currentUser(res: Response): CurrentUser | undefined {
@@ -129,11 +157,10 @@ export function requireUser(
     res.status(403).json({ error: "Please review and accept the privacy notice.", code: "PRIVACY_CONSENT_REQUIRED" });
     return;
   }
-  if (rejectsPatientWebDevice(req, user.role)) {
-    res.status(403).json({
-      error: "Patient and caregiver accounts must sign in from the CareTrack mobile app.",
-      code: "MOBILE_APP_REQUIRED",
-    });
+  // Also checked on every request, so a session can't be carried over to a device the role may not use.
+  const device = deviceProblem(req, user.role);
+  if (device) {
+    res.status(403).json(device);
     return;
   }
   // Accounts with a temporary password can only reach the auth endpoints until they change it.
@@ -303,14 +330,13 @@ router.post("/auth/login", loginRateLimit, async (req, res): Promise<void> => {
     res.status(401).json({ error: "Email or password is incorrect." });
     return;
   }
-  if (rejectsPatientWebDevice(req, user.role)) {
-    await writeAuditLog(user.id, "login_mobile_required", "user", user.id, {
+  const device = deviceProblem(req, user.role);
+  if (device) {
+    await writeAuditLog(user.id, device.code === "MOBILE_APP_REQUIRED" ? "login_mobile_required" : "login_desktop_required", "user", user.id, {
       userAgent: req.header("user-agent")?.slice(0, 200) ?? "",
+      app: isAppClient(req),
     });
-    res.status(403).json({
-      error: "Patient and caregiver accounts can only sign in from the CareTrack mobile app.",
-      code: "MOBILE_APP_REQUIRED",
-    });
+    res.status(403).json(device);
     return;
   }
 
@@ -386,11 +412,9 @@ router.post("/auth/otp/send", otpRequestRateLimit, async (req, res): Promise<voi
     res.status(401).json({ error: "This account is not active." });
     return;
   }
-  if (rejectsPatientWebDevice(req, user.role)) {
-    res.status(403).json({
-      error: "Patient and caregiver accounts can only sign in from the CareTrack mobile app.",
-      code: "MOBILE_APP_REQUIRED",
-    });
+  const device = deviceProblem(req, user.role);
+  if (device) {
+    res.status(403).json(device);
     return;
   }
   const channel = parsed.data.channel;
@@ -504,6 +528,12 @@ router.post("/auth/otp/verify", otpVerifyRateLimit, async (req, res): Promise<vo
   const [user] = await db.select().from(usersTable).where(eq(usersTable.id, challenge.userId)).limit(1);
   if (!user?.active) {
     res.status(401).json({ error: "This account is not active." });
+    return;
+  }
+  // The code must be entered on the same kind of device the role may use.
+  const device = deviceProblem(req, user.role);
+  if (device) {
+    res.status(403).json(device);
     return;
   }
   const [consumed] = await db
