@@ -1241,7 +1241,8 @@ function AiInsightsPage(){
   const retrain=()=>{setMessage('');train.mutate(undefined,{onSuccess:r=>{setMessage(r.message);qc.invalidateQueries({queryKey:getGetRiskModelQueryKey()});qc.invalidateQueries({queryKey:getListRiskPredictionsQueryKey()})},onError:err=>setMessage(apiError(err,'Training failed.'))})};
   const steps=[
     ['1','Collect','Dose logs: scheduled time, taken time, status (taken, missed, skipped, late).'],
-    ['2','Extract features','12 parameters from each patient’s last 14 days, such as adherence, trend, missed streak, time-of-day misses, lateness, regimen complexity, age and conditions.'],
+    // The count comes from the model itself (15 today), so this text can't fall out of date.
+    ['2','Extract features',`${model.data?.parameters?.length||15} parameters from each patient’s last 14 days, such as adherence, trend, missed streak, time-of-day misses, lateness, regimen complexity, age, conditions, and health readings (blood pressure, blood sugar).`],
     ['3','Train','Random Forest: 60 decision trees, each trained on a bootstrap sample and a random subset of features, splitting on Gini impurity.'],
     ['4','Predict','Each tree votes. The averaged probabilities give low / moderate / high risk of poor adherence in the next 7 days.'],
     ['5','Explain & act','Top risk factors, care-team recommendations, patient tasks, and alerts when a patient becomes high-risk.'],
