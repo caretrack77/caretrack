@@ -235,6 +235,11 @@ router.patch(
       res.status(404).json({ error: "Patient not found." });
       return;
     }
+    const [patientLink] = await db
+      .select({ userId: patientsTable.userId })
+      .from(patientsTable)
+      .where(eq(patientsTable.id, params.data.id))
+      .limit(1);
 
     const changes: Partial<typeof patientsTable.$inferInsert> = {};
     if (parsed.data.name !== undefined) changes.name = parsed.data.name.trim();
@@ -256,6 +261,14 @@ router.patch(
 
     if (Object.keys(changes).length > 0) {
       await db.update(patientsTable).set(changes).where(eq(patientsTable.id, params.data.id));
+    }
+    if (patientLink?.userId) {
+      const accountChanges: Partial<typeof usersTable.$inferInsert> = {};
+      if (changes.name !== undefined) accountChanges.name = changes.name;
+      if (changes.phone !== undefined) accountChanges.phone = changes.phone;
+      if (Object.keys(accountChanges).length > 0) {
+        await db.update(usersTable).set(accountChanges).where(eq(usersTable.id, patientLink.userId));
+      }
     }
     const patient = { id: params.data.id };
     if (reassignTo !== null) {
