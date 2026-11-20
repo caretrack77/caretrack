@@ -64,6 +64,9 @@ export async function initNative(): Promise<void> {
     if (canGoBack) window.history.back();
     else void CapacitorApp.minimizeApp();
   });
+  void CapacitorApp.addListener('appStateChange', ({ isActive }) => {
+    if (isActive) window.dispatchEvent(new Event('caretrack-app-resumed'));
+  });
 }
 
 export function hideSplash(): void {

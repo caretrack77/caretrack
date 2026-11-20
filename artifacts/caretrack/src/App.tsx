@@ -234,6 +234,8 @@ function AuthenticatedApp() {
   const doseAlerts=useDoseDueAlerts(user??({id:0,role:'admin'} as AuthUser),ready);
   // Android back button closes the menu first (see native.ts).
   useEffect(()=>{const close=()=>setMobileNav(false);window.addEventListener('caretrack-close-nav',close);return()=>window.removeEventListener('caretrack-close-nav',close)},[]);
+  // Refresh server-backed queries when the Android app returns from the background.
+  useEffect(()=>{const refresh=()=>{if(document.visibilityState==='visible')void client.invalidateQueries()};document.addEventListener('visibilitychange',refresh);window.addEventListener('focus',refresh);window.addEventListener('caretrack-app-resumed',refresh);return()=>{document.removeEventListener('visibilitychange',refresh);window.removeEventListener('focus',refresh);window.removeEventListener('caretrack-app-resumed',refresh)}},[]);
   if (noServer) return <LoginRedirect/>;
   if (me.isLoading) return <LoadingScreen/>;
   if (me.isError || !user) return <LoginRedirect/>;
