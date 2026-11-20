@@ -22,7 +22,10 @@ type WellnessLib = {
   remember(recent: string[], id: string): string[];
 };
 
-export const DOSE_CHANNEL = 'dose-reminders';
+// New channel IDs are required because Android does not let apps change channel sound later.
+export const DOSE_CHANNEL = 'dose-reminders-v2';
+export const ALERT_CHANNEL = 'caretrack-alerts-v2';
+export const SILENT_ALERT_CHANNEL = 'caretrack-alerts-silent-v2';
 export const WELLNESS_CHANNEL = 'wellness-tips';
 const DOSE_ID_LIMIT = 1_800_000_000; // dose notifications use the dose ID (always below this)
 const WELLNESS_BASE = 1_900_000_000; // wellness tips use 1,900,000,000 and up
@@ -52,7 +55,9 @@ let channelsReady: Promise<void> | null = null;
 export function setupNativeNotifications(navigate: (path: string) => void): void {
   if (!isNativeApp) return;
   channelsReady ??= Promise.all([
-    LocalNotifications.createChannel({ id: DOSE_CHANNEL, name: 'Medication reminders', description: 'Reminders when a dose is due', importance: 5, visibility: 1, vibration: true }),
+    LocalNotifications.createChannel({ id: DOSE_CHANNEL, name: 'Medication reminders', description: 'Dose reminders and missed dose alerts', importance: 5, visibility: 1, vibration: true, sound: 'caretrack_notification.wav' }),
+    LocalNotifications.createChannel({ id: ALERT_CHANNEL, name: 'Messages and updates', description: 'New CareTrack messages and updates', importance: 4, visibility: 1, vibration: true, sound: 'caretrack_notification.wav' }),
+    LocalNotifications.createChannel({ id: SILENT_ALERT_CHANNEL, name: 'Silent messages and updates', description: 'CareTrack messages during quiet hours or when sound is off', importance: 3, visibility: 1 }),
     LocalNotifications.createChannel({ id: WELLNESS_CHANNEL, name: 'Wellness tips', description: 'Hydration reminders, health tips, motivation and quotes', importance: 3, visibility: 1 }),
   ]).then(() => undefined).catch(() => undefined);
   void LocalNotifications.addListener('localNotificationActionPerformed', (action) => {
@@ -105,7 +110,7 @@ export async function syncNativeDoseReminders(doses: Dose[]): Promise<void> {
     const existing = pending.get(dose.id);
     if (!wanted) { if (existing) cancel.push({ id: dose.id }); continue; }
     const existingAt = existing?.schedule?.at ? new Date(existing.schedule.at).getTime() : null;
-    if (existingAt === at) continue; // already scheduled for this time
+    if (existingAt === at && existing?.channelId === DOSE_CHANNEL) continue; // already scheduled with sound for this time
     schedule.push({
       id: dose.id,
       title: `CareTrack dose reminder: ${dose.medicationName}`,
@@ -117,6 +122,20 @@ export async function syncNativeDoseReminders(doses: Dose[]): Promise<void> {
   }
   if (cancel.length) await LocalNotifications.cancel({ notifications: cancel });
   if (schedule.length) await LocalNotifications.schedule({ notifications: schedule });
+}
+
+/** Posts a newly received server notification through Android's sound-enabled notification channel. */
+export async function showNativeAlert(input: { id: number; title: string; body: string; url: string; dose?: boolean; silent?: boolean }): Promise<boolean> {
+  if (!isNativeApp || (await notificationPermission()) !== 'granted') return false;
+  await channelsReady;
+  const id = 2_000_000_000 + (Math.abs(input.id) % 147_000_000);
+  await LocalNotifications.schedule({ notifications: [{
+    id, title: input.title, body: input.body,
+    schedule: { at: new Date(Date.now() + 1_000), allowWhileIdle: true },
+    channelId: input.dose ? DOSE_CHANNEL : input.silent ? SILENT_ALERT_CHANNEL : ALERT_CHANNEL,
+    extra: { url: input.url, kind: input.dose ? 'overdue' : 'message' },
+  }] });
+  return true;
 }
 
 type WellnessState = {

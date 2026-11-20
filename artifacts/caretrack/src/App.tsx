@@ -5,7 +5,7 @@ import { Link, Redirect, Route, Switch, useLocation, useParams } from 'wouter';
 import {
   Activity, ArrowLeft, ArrowRight, BarChart3, Bell, CalendarDays, Check, Clock3, CircleHelp,
   ArrowLeftRight, ClipboardList, Download, Eye, EyeOff, FileText, KeyRound, UserPlus, HeartPulse, LayoutDashboard, LogOut, Mail, Menu, MessageSquare, Plus, Pill,
-  Search, Send, ShieldCheck, Sparkles, Stethoscope, Users, Wifi, WifiOff, X, MessagesSquare, ChevronLeft, ChevronRight,
+  Search, Send, ShieldCheck, Sparkles, Stethoscope, Users, Wifi, WifiOff, X, MessagesSquare, ChevronLeft, ChevronRight, RefreshCw,
 } from 'lucide-react';
 import {
   getGetAnalyticsQueryKey, getGetPatientQueryKey, getListAuditLogsQueryKey,
@@ -23,7 +23,7 @@ import { useListMessageCalendar, getListMessageCalendarQueryKey, useListStaffThr
 import { customFetch, OfflineError } from '@workspace/api-client-react';
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { builtInServerUrl, clearNativeSession, getServerUrl, isNativeApp, normalizeServerUrl, openProtectedFile, saveServerUrl, streamServerEvents, testServer } from './native';
-import { clearNativeNotifications, exactAlarmsAllowed, notificationPermission, openExactAlarmSettings, previewNativeWellness, requestNotificationPermission, syncNativeDoseReminders, syncNativeWellness } from './native-notifications';
+import { clearNativeNotifications, exactAlarmsAllowed, notificationPermission, openExactAlarmSettings, previewNativeWellness, requestNotificationPermission, showNativeAlert, syncNativeDoseReminders, syncNativeWellness } from './native-notifications';
 import { clearSavedData, discardChange, getSyncSnapshot, keepMine, onSyncComplete, retryAll, subscribeSync, syncErrorOf, syncStateOf, unsyncedCount, type SyncState } from './offline';
 import { clock12, dateTimeLabel, parseClockList, timeLabel } from './time-format';
 import { initials, shortName } from './names';
@@ -262,7 +262,7 @@ function AuthenticatedApp() {
         <div className="hidden text-sm text-[#67818a] sm:block">Care, made clearer <span className="mx-2 text-[#a5b7bb]">/</span><span className="font-semibold text-[#254a57]">{navItems.find(x=>x.href===pathTitle)?.label||'Patient details'}</span></div>
         {/* Today's date and the connection status are information only (no border or hover, so
             they don't look like buttons). The bell, help and profile picture are buttons. */}
-        <div className="ml-auto flex items-center gap-2 sm:gap-3"><div data-testid="text-today-date" className="hidden cursor-default select-none items-center gap-1.5 px-1 text-xs font-medium text-[#67818a] md:flex"><CalendarDays size={14} aria-hidden="true"/>{new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</div><SyncChip/><NotificationBell user={user} readOnly={user.role==='caregiver'}/><button data-testid="button-help" aria-label="Help" title="Help" onClick={()=>setHelpOpen(true)} className="grid h-9 w-9 place-items-center rounded-full border border-[#dce8e9] bg-white text-[#587680] transition hover:bg-[#f0f7f7]"><CircleHelp size={17}/></button><Link href="/account" data-testid="link-profile" aria-label={`My account (${user.name})`} title="My account" className="rounded-full ring-offset-2 transition hover:ring-2 hover:ring-[#9fcfc9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#17647a]"><Avatar name={user.name} small/></Link></div>
+        <div className="ml-auto flex items-center gap-2 sm:gap-3"><div data-testid="text-today-date" className="hidden cursor-default select-none items-center gap-1.5 px-1 text-xs font-medium text-[#67818a] md:flex"><CalendarDays size={14} aria-hidden="true"/>{new Date().toLocaleDateString('en-US',{weekday:'short',month:'short',day:'numeric'})}</div><SyncChip/><button data-testid="button-refresh-data" aria-label="Refresh CareTrack data" title="Refresh data" onClick={()=>void client.invalidateQueries()} className="grid h-9 w-9 place-items-center rounded-full border border-[#dce8e9] bg-white text-[#587680] transition hover:bg-[#f0f7f7]"><RefreshCw size={15}/></button><NotificationBell user={user} readOnly={user.role==='caregiver'}/><button data-testid="button-help" aria-label="Help" title="Help" onClick={()=>setHelpOpen(true)} className="grid h-9 w-9 place-items-center rounded-full border border-[#dce8e9] bg-white text-[#587680] transition hover:bg-[#f0f7f7]"><CircleHelp size={17}/></button><Link href="/account" data-testid="link-profile" aria-label={`My account (${user.name})`} title="My account" className="rounded-full ring-offset-2 transition hover:ring-2 hover:ring-[#9fcfc9] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[#17647a]"><Avatar name={user.name} small/></Link></div>
       </header>
       <SyncBanner/>
       <WellnessNotifications user={user}/>
@@ -1004,6 +1004,20 @@ function useNotificationAlerts(notifications:Notification[],user:AuthUser){
     const sounding=fresh.filter(n=>!(n.kind==='reminder'&&(user.role==='patient'||user.role==='caregiver')));
     if(!sounding.length)return;
     const dose=sounding.some(n=>n.kind==='reminder'||n.kind==='overdue');
+    if(isNativeApp){
+      const nativeAlerts=sounding.filter(n=>n.kind==='message'||n.kind==='staff-message'||n.kind==='overdue');
+      const otherAlerts=sounding.filter(n=>!nativeAlerts.includes(n));
+      for(const n of nativeAlerts){
+        const isDose=n.kind==='overdue';
+        const quiet=readPref(SOUND_KEY,'on')!=='on'||(!isDose&&inQuietHours());
+        const url=isDose?'/today':n.kind==='staff-message'?'/team-messages':n.patientId?`/messages?patient=${n.patientId}`:'/messages';
+        void showNativeAlert({id:n.id,title:n.title,body:n.message,url,dose:isDose,silent:quiet})
+          .then(ok=>{if(!ok)playChime({kind:isDose?'dose':'alert'})})
+          .catch(()=>playChime({kind:isDose?'dose':'alert'}));
+      }
+      if(otherAlerts.length)playChime({kind:dose?'dose':'alert'});
+      return;
+    }
     const played=nativeDoseAlarms&&dose?false:playChime({kind:dose?'dose':'alert'});
     if(played&&document.hidden&&!isNativeApp&&'Notification' in window&&Notification.permission==='granted'){const n=sounding[0];try{new window.Notification(`CareTrack: ${n.title}`,{body:n.message,tag:`caretrack-${n.id}`,icon:'/icon-192.png'})}catch{/* unsupported */}}
   },[notifications,user.id,user.role]);
