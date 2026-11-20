@@ -16,7 +16,7 @@ import {
   useGenerateReport, useGetAnalytics, useGetCurrentUser, useGetPatient, useListAuditLogs,
   useListDoses, useListMedications, useListNotifications, useListPatientInsights, useListPatients,
   useListReportSchedules, useListReports, useListUsers, useLogin, useLogout, useMarkNotificationRead, useSimulateOverdueDoses,
-  useUpdateDoseStatus, useUpdateMedication, useSendLoginOtp, useVerifyLoginOtp, useChangePassword, getGetCurrentUserQueryKey, useGetRiskModel, getGetRiskModelQueryKey, useTrainRiskModel, useListRiskPredictions, getListRiskPredictionsQueryKey, useGetPatientRisk, getGetPatientRiskQueryKey, useListLabResults, getListLabResultsQueryKey, useUploadLabResult, useReviewLabResult, useListAppointments, getListAppointmentsQueryKey, useCreateAppointment, useUpdateAppointment, useAskAssistant, useCreatePatientAccount, useGetDeliveryStatus, useSendDeliveryTest, useListCoverage, getListCoverageQueryKey, useCreateCoverage, useEndCoverage, useListProviders, useGetMedicationProgress, getGetMedicationProgressQueryKey, useListMessageThreads, getListMessageThreadsQueryKey, useListPatientMessages, getListPatientMessagesQueryKey, useSendPatientMessage, useMarkPatientMessagesRead,   useUpdatePatient, useUpdateReportSchedule, useUpdateUser, useListHealthMetrics, useCreateHealthMetric, useListHealthLogs, useCreateHealthLog, getListHealthMetricsQueryKey, getListHealthLogsQueryKey,
+  useUpdateDoseStatus, useUpdateMedication, useSendLoginOtp, useVerifyLoginOtp, useChangePassword, getGetCurrentUserQueryKey, useGetRiskModel, getGetRiskModelQueryKey, useTrainRiskModel, useListRiskPredictions, getListRiskPredictionsQueryKey, useGetPatientRisk, getGetPatientRiskQueryKey, useListLabResults, getListLabResultsQueryKey, useUploadLabResult, useReviewLabResult, useListAppointments, getListAppointmentsQueryKey, useCreateAppointment, useUpdateAppointment, useCreatePatientAccount, useGetDeliveryStatus, useSendDeliveryTest, useListCoverage, getListCoverageQueryKey, useCreateCoverage, useEndCoverage, useListProviders, useGetMedicationProgress, getGetMedicationProgressQueryKey, useListMessageThreads, getListMessageThreadsQueryKey, useListPatientMessages, getListPatientMessagesQueryKey, useSendPatientMessage, useMarkPatientMessagesRead,   useUpdatePatient, useUpdateReportSchedule, useUpdateUser, useListHealthMetrics, useCreateHealthMetric, useListHealthLogs, useCreateHealthLog, getListHealthMetricsQueryKey, getListHealthLogsQueryKey,
 } from '@workspace/api-client-react';
 import type { Analytics, Appointment, AuditLog, AuthUser, Coverage, LoginChallenge, OtpSendResult, Dose, Medication, Notification, Patient, Report, ReportSchedule, User, HealthMetric, HealthMetricInputMetricType, HealthLog, CalendarMessage, StaffMessage } from '@workspace/api-client-react';
 import { useListMessageCalendar, getListMessageCalendarQueryKey, useListStaffThreads, getListStaffThreadsQueryKey, useListStaffMessages, getListStaffMessagesQueryKey, useSendStaffMessage, useMarkStaffMessagesRead } from '@workspace/api-client-react';
@@ -28,6 +28,7 @@ import { clearSavedData, discardChange, getSyncSnapshot, keepMine, onSyncComplet
 import { clock12, dateTimeLabel, parseClockList, timeLabel } from './time-format';
 import { initials, shortName } from './names';
 import './index.css';
+import { ChatWidget } from './components/ChatWidget';
 
 // networkMode 'always': without it React Query pauses every query and save while the browser
 // reports no network, so saved data would never show and offline saves would hang on "Saving…".
@@ -288,7 +289,7 @@ function AuthenticatedApp() {
         </Switch>
       </main>
       <footer className="px-4 pb-8 text-center text-[11px] leading-5 text-[#90a5aa] sm:px-8"><span className="block">CareTrack is a capstone demonstration. All people and care schedules are fictional.</span><span className="block">AI suggestions support, not replace, clinical judgment.</span></footer>
-      {(user.role==='patient'||user.role==='caregiver')&&<AssistantWidget/>}
+      {['patient','caretaker','caregiver'].includes(user.role)&&<ChatWidget role={user.role}/>}
     </div>
   </div>;
 }
@@ -1362,21 +1363,6 @@ function AppointmentsPanel({user,patientId}:{user:AuthUser;patientId?:number}){
   </Card>;
 }
 function AppointmentsPage({user}:{user:AuthUser}){return <div className="page-enter"><PageHeading eyebrow="Follow-up care" title="Check-ups" description="Upcoming and past follow-up check-ups. Patients get a reminder one day before."/><AppointmentsPanel user={user}/></div>}
-
-/** Medication assistant. It only answers care-related questions and declines anything else. */
-function AssistantWidget(){
-  const ask=useAskAssistant();
-  const [open,setOpen]=useState(false),[text,setText]=useState('');
-  const [chat,setChat]=useState<{from:'me'|'bot';text:string;offTopic?:boolean}[]>([{from:'bot',text:'Hi! Ask me about your medicines, next dose, progress or check-ups.'}]);
-  const [suggestions,setSuggestions]=useState(['When is my next dose?','What if I missed a dose?','How am I doing?']);
-  const send=(q:string)=>{const message=q.trim();if(!message)return;setChat(c=>[...c,{from:'me',text:message}]);setText('');ask.mutate({data:{message}},{onSuccess:r=>{setChat(c=>[...c,{from:'bot',text:r.reply,offTopic:!r.relevant}]);if(r.suggestions.length)setSuggestions(r.suggestions)},onError:()=>setChat(c=>[...c,{from:'bot',text:'I couldn’t answer right now. Please try again.'}])})};
-  return <>{open&&<div data-testid="panel-assistant" className="fixed bottom-20 right-4 z-50 flex h-[460px] w-[min(360px,calc(100vw-2rem))] flex-col overflow-hidden rounded-2xl border border-[#dce8e8] bg-white shadow-[0_18px_45px_rgba(22,62,76,.2)]"><div className="flex items-center justify-between bg-[#174353] px-4 py-3 text-white"><div><div className="text-sm font-bold">CareTrack assistant</div><div className="text-[10px] text-white/60">Answers medication questions only</div></div><button aria-label="Close assistant" onClick={()=>setOpen(false)} className="rounded p-1 hover:bg-white/10"><X size={16}/></button></div>
-    <div className="flex-1 space-y-2 overflow-y-auto bg-[#f7fbfb] p-3">{chat.map((m,i)=><div key={i} className={`flex ${m.from==='me'?'justify-end':''}`}><div className={`max-w-[85%] rounded-2xl px-3 py-2 text-xs leading-5 ${m.from==='me'?'bg-[#17647a] text-white':m.offTopic?'border border-[#f0dfb8] bg-[#fdf7ea] text-[#8a6a2a]':'border border-[#e3eded] bg-white text-[#31535e]'}`}>{m.text}</div></div>)}{ask.isPending&&<div className="text-[11px] text-[#81969b]">Thinking…</div>}</div>
-    <div className="flex flex-wrap gap-1.5 border-t border-[#eaf0f0] px-3 py-2">{suggestions.map(s=><button key={s} onClick={()=>send(s)} className="rounded-full border border-[#dce8e8] px-2.5 py-1 text-[10px] text-[#397d7e] hover:bg-[#f3f9f8]">{s}</button>)}</div>
-    <form onSubmit={e=>{e.preventDefault();send(text)}} className="flex gap-2 border-t border-[#eaf0f0] p-2"><input data-testid="input-assistant" value={text} onChange={e=>setText(e.target.value)} maxLength={500} placeholder="Ask about your medicines…" className="h-9 flex-1 rounded-lg border border-input px-3 text-xs outline-none focus:border-primary"/><button aria-label="Send" className="grid h-9 w-9 place-items-center rounded-lg bg-[#17647a] text-white"><Send size={15}/></button></form></div>}
-    <button data-testid="button-open-assistant" onClick={()=>setOpen(!open)} aria-label="Open the CareTrack assistant" className="fixed bottom-4 right-4 z-50 flex h-12 items-center gap-2 rounded-full bg-[#17647a] px-4 text-sm font-semibold text-white shadow-lg hover:bg-[#125366]"><MessageSquare size={18}/>{open?'Close':'Ask CareTrack'}</button></>;
-}
-
 
 const FREQ_TEXT=(m:Medication)=>m.frequency==='every_hours'?`every ${m.intervalHours||'?'} hours`:m.frequency==='specific_days'?`on ${(m.daysOfWeek||[]).map(d=>['Sun','Mon','Tue','Wed','Thu','Fri','Sat'][d]).join(', ')}`:`${m.timesPerDay}× a day`;
 /** A printable prescription built from the medications the doctor prescribed. */
