@@ -26,6 +26,8 @@ services:
         sync: false
       - key: SESSION_SECRET # MUST be the same value as in your .env: it also unlocks encrypted messages and lab files
         sync: false
+      - key: GEMINI_ASSISTANT_JWT_SECRET # Set the same random 32+ character value as a Supabase Edge Function secret
+        sync: false
       # --- login codes ---
       - key: OTP_ENABLED
         value: "true"

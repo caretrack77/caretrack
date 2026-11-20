@@ -1380,7 +1380,11 @@ export const askAssistantBodyMessageMax = 500;
 
 
 export const AskAssistantBody = zod.object({
-  "message": zod.string().min(1).max(askAssistantBodyMessageMax)
+  "message": zod.string().min(1).max(askAssistantBodyMessageMax),
+  "history": zod.array(zod.object({
+    "role": zod.enum(["user", "model"]),
+    "text": zod.string().max(500)
+  })).max(6).optional()
 })
 
 export const AskAssistantResponse = zod.object({

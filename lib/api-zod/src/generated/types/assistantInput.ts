@@ -12,4 +12,5 @@ export interface AssistantInput {
      * @maxLength 500
      */
   message: string;
+  history?: { role: 'user' | 'model'; text: string }[];
 }
