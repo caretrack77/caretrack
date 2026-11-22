@@ -18,6 +18,7 @@ import careRouter from "./care";
 import clinicalRouter from "./clinical";
 import eventsRouter from "./events";
 import staffMessagesRouter from "./staff-messages";
+import pushTokensRouter from "./push-tokens";
 
 const router: IRouter = Router();
 
@@ -40,5 +41,6 @@ router.use(careRouter);
 router.use(clinicalRouter);
 router.use(eventsRouter);
 router.use(staffMessagesRouter);
+router.use(pushTokensRouter);
 
 export default router;

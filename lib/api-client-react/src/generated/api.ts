@@ -86,10 +86,16 @@ import type {
   PatientDetail,
   PatientInput,
   PatientRiskDetail,
+  PatientTransferDecision,
+  PatientTransferRequest,
+  PatientTransferRequestInput,
   PatientUpdate,
   PrivacyConsentInput,
   PrivacyConsentResult,
   ProviderSummary,
+  RegisterPushToken200,
+  RegisterPushTokenBody,
+  RemovePushTokenBody,
   Report,
   ReportInput,
   ReportSchedule,
@@ -1484,6 +1490,80 @@ export const useUpdateUser = <TError = ErrorType<void>,
       return useMutation(getUpdateUserMutationOptions(options), queryClient);
     }
 
+export const getDeleteUserUrl = (id: number,) => {
+
+
+
+
+  return `/api/users/${id}`
+}
+
+/**
+ * @summary Delete a user
+ */
+export const deleteUser = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDeleteUserUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeleteUserMutationKey = () => ['deleteUser'] as const;
+
+export const getDeleteUserMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteUser>>, TError,DeleteUserMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deleteUser>>, TError,DeleteUserMutationVariables, TContext> => {
+
+const mutationKey = getDeleteUserMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deleteUser>>, DeleteUserMutationVariables> = (props) => {
+          const {id} = props ?? {};
+
+          return  deleteUser(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeleteUserMutationResult = NonNullable<Awaited<ReturnType<typeof deleteUser>>>
+
+    export type DeleteUserMutationError = ErrorType<void>
+    export type DeleteUserMutationVariables = {id: number}
+
+    /**
+ * @summary Delete a user
+ */
+export const useDeleteUser = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deleteUser>>, TError,DeleteUserMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deleteUser>>,
+        TError,
+        DeleteUserMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDeleteUserMutationOptions(options), queryClient);
+    }
+
 export const getListPatientsUrl = () => {
 
 
@@ -1861,6 +1941,80 @@ export const useUpdatePatient = <TError = ErrorType<void>,
         TContext
       > => {
       return useMutation(getUpdatePatientMutationOptions(options), queryClient);
+    }
+
+export const getDeletePatientUrl = (id: number,) => {
+
+
+
+
+  return `/api/patients/${id}`
+}
+
+/**
+ * @summary Delete a patient
+ */
+export const deletePatient = async (id: number, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+  return customFetch<void>(getDeletePatientUrl(id),
+  {
+    ...options,
+    method: 'DELETE'
+
+
+  }
+);}
+
+
+
+
+
+export const getDeletePatientMutationKey = () => ['deletePatient'] as const;
+
+export const getDeletePatientMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePatient>>, TError,DeletePatientMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof deletePatient>>, TError,DeletePatientMutationVariables, TContext> => {
+
+const mutationKey = getDeletePatientMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof deletePatient>>, DeletePatientMutationVariables> = (props) => {
+          const {id} = props ?? {};
+
+          return  deletePatient(id,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type DeletePatientMutationResult = NonNullable<Awaited<ReturnType<typeof deletePatient>>>
+
+    export type DeletePatientMutationError = ErrorType<void>
+    export type DeletePatientMutationVariables = {id: number}
+
+    /**
+ * @summary Delete a patient
+ */
+export const useDeletePatient = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof deletePatient>>, TError,DeletePatientMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof deletePatient>>,
+        TError,
+        DeletePatientMutationVariables,
+        TContext
+      > => {
+      return useMutation(getDeletePatientMutationOptions(options), queryClient);
     }
 
 export const getListMedicationsUrl = (params?: ListMedicationsParams,) => {
@@ -3810,6 +3964,284 @@ export const useCreateCoverage = <TError = ErrorType<unknown>,
       return useMutation(getCreateCoverageMutationOptions(options), queryClient);
     }
 
+export const getListPatientTransferRequestsUrl = () => {
+
+
+
+
+  return `/api/coverage/transfers`
+}
+
+/**
+ * @summary Transfer requests visible to the signed-in doctor
+ */
+export const listPatientTransferRequests = async ( options?: Parameters<typeof customFetch>[1]): Promise<PatientTransferRequest[]> => {
+
+  return customFetch<PatientTransferRequest[]>(getListPatientTransferRequestsUrl(),
+  {
+    ...options,
+    method: 'GET'
+
+
+  }
+);}
+
+
+
+
+
+export const getListPatientTransferRequestsQueryKey = () => {
+    return [
+    `/api/coverage/transfers`
+    ] as const;
+    }
+
+
+export const getListPatientTransferRequestsQueryOptions = <TData = Awaited<ReturnType<typeof listPatientTransferRequests>>, TError = ErrorType<unknown>>( options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPatientTransferRequests>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+) => {
+
+const {query: queryOptions, request: requestOptions} = options ?? {};
+
+  const queryKey =  queryOptions?.queryKey ?? getListPatientTransferRequestsQueryKey();
+
+
+
+    const queryFn: QueryFunction<Awaited<ReturnType<typeof listPatientTransferRequests>>> = ({ signal }) => listPatientTransferRequests({ signal, ...requestOptions });
+
+
+
+
+
+   return  { queryKey, queryFn, ...queryOptions} as UseQueryOptions<Awaited<ReturnType<typeof listPatientTransferRequests>>, TError, TData> & { queryKey: DataTag<QueryKey, TData, TError> }
+}
+
+export type ListPatientTransferRequestsQueryResult = NonNullable<Awaited<ReturnType<typeof listPatientTransferRequests>>>
+export type ListPatientTransferRequestsQueryError = ErrorType<unknown>
+
+
+export function useListPatientTransferRequests<TData = Awaited<ReturnType<typeof listPatientTransferRequests>>, TError = ErrorType<unknown>>(
+  options: { query:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPatientTransferRequests>>, TError, TData>> & Pick<
+        DefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listPatientTransferRequests>>,
+          TError,
+          Awaited<ReturnType<typeof listPatientTransferRequests>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  DefinedUseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPatientTransferRequests<TData = Awaited<ReturnType<typeof listPatientTransferRequests>>, TError = ErrorType<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPatientTransferRequests>>, TError, TData>> & Pick<
+        UndefinedInitialDataOptions<
+          Awaited<ReturnType<typeof listPatientTransferRequests>>,
+          TError,
+          Awaited<ReturnType<typeof listPatientTransferRequests>>
+        > , 'initialData'
+      >, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+export function useListPatientTransferRequests<TData = Awaited<ReturnType<typeof listPatientTransferRequests>>, TError = ErrorType<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPatientTransferRequests>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+  ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> }
+/**
+ * @summary Transfer requests visible to the signed-in doctor
+ */
+
+export function useListPatientTransferRequests<TData = Awaited<ReturnType<typeof listPatientTransferRequests>>, TError = ErrorType<unknown>>(
+  options?: { query?:Partial<UseQueryOptions<Awaited<ReturnType<typeof listPatientTransferRequests>>, TError, TData>>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient
+ ):  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> } {
+
+  const queryOptions = getListPatientTransferRequestsQueryOptions(options)
+
+  const query = useQuery(queryOptions, queryClient) as  UseQueryResult<TData, TError> & { queryKey: DataTag<QueryKey, TData, TError> };
+
+  return withQueryKey(query, queryOptions.queryKey);
+}
+
+
+
+
+
+
+
+export const getCreatePatientTransferRequestUrl = () => {
+
+
+
+
+  return `/api/coverage/transfers`
+}
+
+/**
+ * @summary Request a permanent transfer of an assigned patient
+ */
+export const createPatientTransferRequest = async (patientTransferRequestInput: PatientTransferRequestInput, options?: Parameters<typeof customFetch>[1]): Promise<PatientTransferRequest> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<PatientTransferRequest>(getCreatePatientTransferRequestUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(patientTransferRequestInput)
+  }
+);}
+
+
+
+
+
+export const getCreatePatientTransferRequestMutationKey = () => ['createPatientTransferRequest'] as const;
+
+export const getCreatePatientTransferRequestMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPatientTransferRequest>>, TError,CreatePatientTransferRequestMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof createPatientTransferRequest>>, TError,CreatePatientTransferRequestMutationVariables, TContext> => {
+
+const mutationKey = getCreatePatientTransferRequestMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof createPatientTransferRequest>>, CreatePatientTransferRequestMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  createPatientTransferRequest(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type CreatePatientTransferRequestMutationResult = NonNullable<Awaited<ReturnType<typeof createPatientTransferRequest>>>
+    export type CreatePatientTransferRequestMutationBody = BodyType<PatientTransferRequestInput>
+    export type CreatePatientTransferRequestMutationError = ErrorType<unknown>
+    export type CreatePatientTransferRequestMutationVariables = {data: BodyType<PatientTransferRequestInput>}
+
+    /**
+ * @summary Request a permanent transfer of an assigned patient
+ */
+export const useCreatePatientTransferRequest = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof createPatientTransferRequest>>, TError,CreatePatientTransferRequestMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof createPatientTransferRequest>>,
+        TError,
+        CreatePatientTransferRequestMutationVariables,
+        TContext
+      > => {
+      return useMutation(getCreatePatientTransferRequestMutationOptions(options), queryClient);
+    }
+
+export const getRespondToPatientTransferRequestUrl = (id: number,) => {
+
+
+
+
+  return `/api/coverage/transfers/${id}/respond`
+}
+
+/**
+ * @summary Accept or decline a patient transfer request
+ */
+export const respondToPatientTransferRequest = async (id: number,
+    patientTransferDecision: PatientTransferDecision, options?: Parameters<typeof customFetch>[1]): Promise<PatientTransferRequest> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<PatientTransferRequest>(getRespondToPatientTransferRequestUrl(id),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(patientTransferDecision)
+  }
+);}
+
+
+
+
+
+export const getRespondToPatientTransferRequestMutationKey = () => ['respondToPatientTransferRequest'] as const;
+
+export const getRespondToPatientTransferRequestMutationOptions = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof respondToPatientTransferRequest>>, TError,RespondToPatientTransferRequestMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof respondToPatientTransferRequest>>, TError,RespondToPatientTransferRequestMutationVariables, TContext> => {
+
+const mutationKey = getRespondToPatientTransferRequestMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof respondToPatientTransferRequest>>, RespondToPatientTransferRequestMutationVariables> = (props) => {
+          const {id,data} = props ?? {};
+
+          return  respondToPatientTransferRequest(id,data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RespondToPatientTransferRequestMutationResult = NonNullable<Awaited<ReturnType<typeof respondToPatientTransferRequest>>>
+    export type RespondToPatientTransferRequestMutationBody = BodyType<PatientTransferDecision>
+    export type RespondToPatientTransferRequestMutationError = ErrorType<unknown>
+    export type RespondToPatientTransferRequestMutationVariables = {id: number;data: BodyType<PatientTransferDecision>}
+
+    /**
+ * @summary Accept or decline a patient transfer request
+ */
+export const useRespondToPatientTransferRequest = <TError = ErrorType<unknown>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof respondToPatientTransferRequest>>, TError,RespondToPatientTransferRequestMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof respondToPatientTransferRequest>>,
+        TError,
+        RespondToPatientTransferRequestMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRespondToPatientTransferRequestMutationOptions(options), queryClient);
+    }
+
 export const getEndCoverageUrl = (id: number,) => {
 
 
@@ -5668,6 +6100,182 @@ export function useListNotifications<TData = Awaited<ReturnType<typeof listNotif
 
 
 
+
+export const getRegisterPushTokenUrl = () => {
+
+
+
+
+  return `/api/push-tokens`
+}
+
+/**
+ * @summary Register the signed-in Android app for message alerts
+ */
+export const registerPushToken = async (registerPushTokenBody: RegisterPushTokenBody, options?: Parameters<typeof customFetch>[1]): Promise<RegisterPushToken200> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<RegisterPushToken200>(getRegisterPushTokenUrl(),
+  {
+    ...options,
+    method: 'POST',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(registerPushTokenBody)
+  }
+);}
+
+
+
+
+
+export const getRegisterPushTokenMutationKey = () => ['registerPushToken'] as const;
+
+export const getRegisterPushTokenMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof registerPushToken>>, TError,RegisterPushTokenMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof registerPushToken>>, TError,RegisterPushTokenMutationVariables, TContext> => {
+
+const mutationKey = getRegisterPushTokenMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof registerPushToken>>, RegisterPushTokenMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  registerPushToken(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RegisterPushTokenMutationResult = NonNullable<Awaited<ReturnType<typeof registerPushToken>>>
+    export type RegisterPushTokenMutationBody = BodyType<RegisterPushTokenBody>
+    export type RegisterPushTokenMutationError = ErrorType<void>
+    export type RegisterPushTokenMutationVariables = {data: BodyType<RegisterPushTokenBody>}
+
+    /**
+ * @summary Register the signed-in Android app for message alerts
+ */
+export const useRegisterPushToken = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof registerPushToken>>, TError,RegisterPushTokenMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof registerPushToken>>,
+        TError,
+        RegisterPushTokenMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRegisterPushTokenMutationOptions(options), queryClient);
+    }
+
+export const getRemovePushTokenUrl = () => {
+
+
+
+
+  return `/api/push-tokens`
+}
+
+/**
+ * @summary Remove the signed-in Android app's push registration
+ */
+export const removePushToken = async (removePushTokenBody: RemovePushTokenBody, options?: Parameters<typeof customFetch>[1]): Promise<void> => {
+
+    const getHeaders = (h?: NonNullable<RequestInit['headers']>): Record<string, string | readonly string[]> => {
+    if (!h) return {};
+    if (h instanceof Headers) return Object.fromEntries(h.entries());
+    if (Symbol.iterator in h) {
+      return Object.fromEntries(
+        Array.from(h as Iterable<Iterable<string>>, (entry) => Array.from(entry) as [string, string]),
+      );
+    }
+    const headers: Record<string, string | readonly string[]> = {};
+    for (const [name, value] of Object.entries<string | readonly string[] | undefined>(h)) {
+      if (value !== undefined) headers[name] = value;
+    }
+    return headers;
+  };
+return customFetch<void>(getRemovePushTokenUrl(),
+  {
+    ...options,
+    method: 'DELETE',
+    headers: { 'Content-Type': 'application/json', ...getHeaders(options?.headers) },
+    body: JSON.stringify(removePushTokenBody)
+  }
+);}
+
+
+
+
+
+export const getRemovePushTokenMutationKey = () => ['removePushToken'] as const;
+
+export const getRemovePushTokenMutationOptions = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removePushToken>>, TError,RemovePushTokenMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+): UseMutationOptions<Awaited<ReturnType<typeof removePushToken>>, TError,RemovePushTokenMutationVariables, TContext> => {
+
+const mutationKey = getRemovePushTokenMutationKey();
+const {mutation: mutationOptions, request: requestOptions} = options ?
+      options.mutation && 'mutationKey' in options.mutation && options.mutation.mutationKey ?
+      options
+      : {...options, mutation: {...options.mutation, mutationKey}}
+      : {mutation: { mutationKey, }, request: undefined};
+
+
+
+
+      const mutationFn: MutationFunction<Awaited<ReturnType<typeof removePushToken>>, RemovePushTokenMutationVariables> = (props) => {
+          const {data} = props ?? {};
+
+          return  removePushToken(data,requestOptions)
+        }
+
+
+
+
+
+
+  return  { mutationFn, ...mutationOptions }}
+
+    export type RemovePushTokenMutationResult = NonNullable<Awaited<ReturnType<typeof removePushToken>>>
+    export type RemovePushTokenMutationBody = BodyType<RemovePushTokenBody>
+    export type RemovePushTokenMutationError = ErrorType<void>
+    export type RemovePushTokenMutationVariables = {data: BodyType<RemovePushTokenBody>}
+
+    /**
+ * @summary Remove the signed-in Android app's push registration
+ */
+export const useRemovePushToken = <TError = ErrorType<void>,
+    TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof removePushToken>>, TError,RemovePushTokenMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}
+ , queryClient?: QueryClient): UseMutationResult<
+        Awaited<ReturnType<typeof removePushToken>>,
+        TError,
+        RemovePushTokenMutationVariables,
+        TContext
+      > => {
+      return useMutation(getRemovePushTokenMutationOptions(options), queryClient);
+    }
 
 export const getEventsUrl = () => {
 

@@ -1,7 +1,7 @@
 import { and, eq, inArray, ne } from "drizzle-orm";
 import { Router, type IRouter } from "express";
 import bcrypt from "bcryptjs";
-import { CreateUserResponse, ListUsersResponse, UpdateUserBody, UpdateUserResponse, CreateUserBody, UpdateUserParams } from "@workspace/api-zod";
+import { CreateUserResponse, ListUsersResponse, UpdateUserBody, UpdateUserResponse, CreateUserBody, UpdateUserParams, DeleteUserParams } from "@workspace/api-zod";
 import { db, privacyConsentsTable, usersTable } from "@workspace/db";
 import { PRIVACY_NOTICE_VERSION } from "../lib/security-config";
 import { authenticate, currentUser, passwordProblem, phoneVerifiedFor, requireRoles, requireUser } from "../lib/auth";
@@ -170,6 +170,34 @@ router.patch("/users/:id", async (req, res): Promise<void> => {
   res.json(
     UpdateUserResponse.parse((await withConsent([user]))[0]),
   );
+});
+
+
+router.delete("/users/:id", async (req, res): Promise<void> => {
+  const params = DeleteUserParams.safeParse(req.params);
+  if (!params.success) {
+    res.status(400).json({ error: params.error.message });
+    return;
+  }
+  if (params.data.id === currentUser(res)!.id) {
+    res.status(400).json({ error: "You can't delete your own account." });
+    return;
+  }
+  const [existing] = await db
+    .select({ id: usersTable.id, name: usersTable.name, role: usersTable.role })
+    .from(usersTable)
+    .where(eq(usersTable.id, params.data.id))
+    .limit(1);
+  if (!existing) {
+    res.status(404).json({ error: "User not found." });
+    return;
+  }
+  await db.delete(usersTable).where(eq(usersTable.id, params.data.id));
+  await writeAuditLog(currentUser(res)!.id, "delete", "user", existing.id, {
+    name: existing.name,
+    role: existing.role,
+  });
+  res.status(204).end();
 });
 
 export default router;

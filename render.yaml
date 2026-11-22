@@ -28,6 +28,8 @@ services:
         sync: false
       - key: GEMINI_ASSISTANT_JWT_SECRET # Set the same random 32+ character value as a Supabase Edge Function secret
         sync: false
+      - key: FIREBASE_SERVICE_ACCOUNT_JSON # Firebase service-account JSON for Android message push
+        sync: false
       # --- login codes ---
       - key: OTP_ENABLED
         value: "true"

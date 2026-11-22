@@ -333,6 +333,16 @@ export const UpdateUserResponse = zod.object({
 
 
 /**
+ * @summary Delete a user
+ */
+export const DeleteUserParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const DeleteUserResponse = zod.void()
+
+
+/**
  * @summary List patients visible to the current user
  */
 export const ListPatientsResponseItem = zod.object({
@@ -501,6 +511,16 @@ export const UpdatePatientResponse = zod.object({
   "active": zod.boolean(),
   "createdAt": zod.coerce.date()
 })
+
+
+/**
+ * @summary Delete a patient
+ */
+export const DeletePatientParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const DeletePatientResponse = zod.void()
 
 
 /**
@@ -997,6 +1017,81 @@ export const CreateCoverageResponse = zod.object({
 
 
 /**
+ * @summary Transfer requests visible to the signed-in doctor
+ */
+export const ListPatientTransferRequestsResponseItem = zod.object({
+  "id": zod.number().int(),
+  "patientId": zod.number().int(),
+  "patientName": zod.string(),
+  "fromProviderId": zod.number().int(),
+  "fromProviderName": zod.string(),
+  "toProviderId": zod.number().int(),
+  "toProviderName": zod.string(),
+  "reason": zod.string().nullable(),
+  "status": zod.enum(['pending', 'accepted', 'declined']),
+  "createdAt": zod.coerce.date(),
+  "respondedAt": zod.coerce.date().nullable()
+})
+export const ListPatientTransferRequestsResponse = zod.array(ListPatientTransferRequestsResponseItem)
+
+
+/**
+ * @summary Request a permanent transfer of an assigned patient
+ */
+
+
+export const createPatientTransferRequestBodyReasonMax = 200;
+
+
+
+export const CreatePatientTransferRequestBody = zod.object({
+  "patientId": zod.number().int().min(1),
+  "toProviderId": zod.number().int().min(1),
+  "reason": zod.string().max(createPatientTransferRequestBodyReasonMax).nullish()
+})
+
+export const CreatePatientTransferRequestResponse = zod.object({
+  "id": zod.number().int(),
+  "patientId": zod.number().int(),
+  "patientName": zod.string(),
+  "fromProviderId": zod.number().int(),
+  "fromProviderName": zod.string(),
+  "toProviderId": zod.number().int(),
+  "toProviderName": zod.string(),
+  "reason": zod.string().nullable(),
+  "status": zod.enum(['pending', 'accepted', 'declined']),
+  "createdAt": zod.coerce.date(),
+  "respondedAt": zod.coerce.date().nullable()
+})
+
+
+/**
+ * @summary Accept or decline a patient transfer request
+ */
+export const RespondToPatientTransferRequestParams = zod.object({
+  "id": zod.coerce.number().int()
+})
+
+export const RespondToPatientTransferRequestBody = zod.object({
+  "decision": zod.enum(['accept', 'decline'])
+})
+
+export const RespondToPatientTransferRequestResponse = zod.object({
+  "id": zod.number().int(),
+  "patientId": zod.number().int(),
+  "patientName": zod.string(),
+  "fromProviderId": zod.number().int(),
+  "fromProviderName": zod.string(),
+  "toProviderId": zod.number().int(),
+  "toProviderName": zod.string(),
+  "reason": zod.string().nullable(),
+  "status": zod.enum(['pending', 'accepted', 'declined']),
+  "createdAt": zod.coerce.date(),
+  "respondedAt": zod.coerce.date().nullable()
+})
+
+
+/**
  * @summary End a coverage arrangement early
  */
 export const EndCoverageParams = zod.object({
@@ -1382,9 +1477,9 @@ export const askAssistantBodyMessageMax = 500;
 export const AskAssistantBody = zod.object({
   "message": zod.string().min(1).max(askAssistantBodyMessageMax),
   "history": zod.array(zod.object({
-    "role": zod.enum(["user", "model"]),
-    "text": zod.string().max(500)
-  })).max(6).optional()
+  "role": zod.enum(['user', 'model']),
+  "text": zod.string()
+})).optional()
 })
 
 export const AskAssistantResponse = zod.object({
@@ -1488,6 +1583,36 @@ export const ListNotificationsResponseItem = zod.object({
   "createdAt": zod.coerce.date()
 })
 export const ListNotificationsResponse = zod.array(ListNotificationsResponseItem)
+
+
+/**
+ * @summary Register the signed-in Android app for message alerts
+ */
+export const registerPushTokenBodyTokenMax = 4096;
+
+
+
+export const RegisterPushTokenBody = zod.object({
+  "token": zod.string().min(1).max(registerPushTokenBodyTokenMax)
+})
+
+export const RegisterPushTokenResponse = zod.object({
+  "deliveryConfigured": zod.boolean()
+})
+
+
+/**
+ * @summary Remove the signed-in Android app's push registration
+ */
+export const removePushTokenBodyTokenMax = 4096;
+
+
+
+export const RemovePushTokenBody = zod.object({
+  "token": zod.string().min(1).max(removePushTokenBodyTokenMax)
+})
+
+export const RemovePushTokenResponse = zod.void()
 
 
 /**

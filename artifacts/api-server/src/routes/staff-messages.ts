@@ -14,6 +14,7 @@ import { authenticate, currentUser, requireUser, type CurrentUser } from "../lib
 import { writeAuditLog } from "../lib/audit";
 import { decryptText, encryptText } from "../lib/encryption";
 import { publishUsers } from "../lib/realtime";
+import { sendMessagePush } from "../lib/push";
 
 const router: IRouter = Router();
 // Routers are mounted without a path prefix, so the role check is per route (a router-wide
@@ -150,17 +151,24 @@ router.post("/staff-messages/:userId", async (req, res): Promise<void> => {
     .from(notificationsTable)
     .where(and(eq(notificationsTable.userId, other.id), eq(notificationsTable.kind, "staff-message"), eq(notificationsTable.read, false), eq(notificationsTable.title, `Team message from ${user.name}`)))
     .limit(1);
-  if (!existing) {
-    await db.insert(notificationsTable).values({
+  const [notification] = existing
+    ? [existing]
+    : await db.insert(notificationsTable).values({
       userId: other.id,
       kind: "staff-message",
       title: `Team message from ${user.name}`,
       // Message text stays encrypted in the staff messages table only.
       message: "Open Team messages to read it.",
-    });
-  }
+    }).returning({ id: notificationsTable.id });
   publishUsers([other.id], { type: "message", id: message.id });
   publishUsers([other.id], { type: "notification" });
+  if (notification) {
+    await sendMessagePush([other.id], {
+      notificationId: notification.id,
+      url: `/team-messages?user=${user.id}`,
+      kind: "staff-message",
+    });
+  }
   await writeAuditLog(user.id, "staff_message_sent", "user", other.id, { messageId: message.id });
   res.status(201).json(serialize({ message, senderName: user.name, senderRole: user.role }));
 });

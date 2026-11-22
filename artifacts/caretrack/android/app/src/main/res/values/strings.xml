@@ -4,4 +4,5 @@
     <string name="title_activity_main">CareTrack</string>
     <string name="package_name">com.caretrack.app</string>
     <string name="custom_url_scheme">com.caretrack.app</string>
+    <string name="default_notification_channel_id">caretrack-alerts-v2</string>
 </resources>

@@ -6,6 +6,9 @@
 // Duplicates are avoided with stable IDs: a dose always uses its dose ID, so re-scheduling it
 // replaces the pending alarm instead of adding a second one. Wellness tips use their own range.
 import { LocalNotifications, type LocalNotificationSchema } from '@capacitor/local-notifications';
+import { PushNotifications } from '@capacitor/push-notifications';
+import { Preferences } from '@capacitor/preferences';
+import { apiRequest } from '@workspace/api-client-react';
 import { isNativeApp } from './native';
 
 type Dose = { id: number; status: string; scheduledTime: string; medicationName: string; dosage?: string | null };
@@ -34,8 +37,41 @@ const WELLNESS_DAYS = 5; // tips are scheduled this many days ahead, refreshed w
 const DOSE_HORIZON = 2 * 24 * 60 * 60 * 1000;
 const MINUTE = 60_000;
 const STATE_KEY = 'caretrack-wellness-native';
+const PUSH_TOKEN_KEY = 'caretrack-fcm-token';
 
 let wellness: Promise<WellnessLib> | null = null;
+let pushListenersReady: Promise<void> | null = null;
+let pushRegistrationRequested = false;
+let pushToken: string | null = null;
+const firebaseAndroidConfigured = import.meta.env.VITE_FIREBASE_ANDROID_CONFIGURED === true;
+export type NativePushStatus = 'idle' | 'registering' | 'registered' | 'server-unconfigured' | 'android-unconfigured' | 'error';
+let pushStatus: NativePushStatus = 'idle';
+
+function updatePushStatus(status: NativePushStatus): void {
+  pushStatus = status;
+  window.dispatchEvent(new CustomEvent('caretrack-push-status', { detail: status }));
+}
+
+export function getNativePushStatus(): NativePushStatus {
+  return pushStatus;
+}
+
+async function savePushToken(token: string): Promise<void> {
+  const { url, headers } = await apiRequest('/api/push-tokens');
+  headers.set('content-type', 'application/json');
+  const response = await fetch(url, {
+    method: 'POST',
+    headers,
+    body: JSON.stringify({ token }),
+  });
+  if (!response.ok) throw new Error(`Push token registration failed (${response.status}).`);
+  const result = await response.json() as { deliveryConfigured?: boolean };
+  updatePushStatus(result.deliveryConfigured ? 'registered' : 'server-unconfigured');
+}
+
+function nativePushError(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
 /** The shared wellness message library (public/wellness.js), bundled with the app. */
 function loadWellness(): Promise<WellnessLib> {
   const existing = (window as unknown as { CareTrackWellness?: WellnessLib }).CareTrackWellness;
@@ -54,6 +90,7 @@ let channelsReady: Promise<void> | null = null;
 /** Creates the Android notification channels and opens the right screen when a notification is tapped. */
 export function setupNativeNotifications(navigate: (path: string) => void): void {
   if (!isNativeApp) return;
+  if (!firebaseAndroidConfigured) updatePushStatus('android-unconfigured');
   channelsReady ??= Promise.all([
     LocalNotifications.createChannel({ id: DOSE_CHANNEL, name: 'Medication reminders', description: 'Dose reminders and missed dose alerts', importance: 5, visibility: 1, vibration: true, sound: 'caretrack_notification.wav' }),
     LocalNotifications.createChannel({ id: ALERT_CHANNEL, name: 'Messages and updates', description: 'New CareTrack messages and updates', importance: 4, visibility: 1, vibration: true, sound: 'caretrack_notification.wav' }),
@@ -64,6 +101,44 @@ export function setupNativeNotifications(navigate: (path: string) => void): void
     const url = (action.notification.extra as { url?: string } | undefined)?.url;
     if (url) navigate(url);
   });
+  pushListenersReady ??= Promise.all([
+    PushNotifications.addListener('registration', ({ value }) => {
+      pushToken = value;
+      void Preferences.set({ key: PUSH_TOKEN_KEY, value }).then(() => {
+        if (pushRegistrationRequested) return savePushToken(value);
+        return undefined;
+      }).catch((error: unknown) => {
+        updatePushStatus('error');
+        console.error('Could not register CareTrack push token', error);
+      });
+    }),
+    PushNotifications.addListener('registrationError', (error) => {
+      updatePushStatus('error');
+      console.error('CareTrack push registration failed', error);
+    }),
+    PushNotifications.addListener('pushNotificationReceived', (notification) => {
+      const data = notification.data as { url?: unknown; notificationId?: unknown; kind?: unknown } | undefined;
+      const notificationId = Number(data?.notificationId);
+      const id = Number.isSafeInteger(notificationId) && notificationId > 0
+        ? notificationId
+        : Date.now() % 147_000_000;
+      const url = typeof data?.url === 'string' && data.url.startsWith('/') && !data.url.startsWith('//')
+        ? data.url
+        : '/messages';
+      void showNativeAlert({
+        id,
+        title: notification.title || 'New CareTrack message',
+        body: notification.body || 'Open CareTrack to read your message.',
+        url,
+        silent: false,
+      }).catch((error: unknown) => console.error('Could not show a CareTrack push notification', error));
+      window.dispatchEvent(new Event('caretrack-push-received'));
+    }),
+    PushNotifications.addListener('pushNotificationActionPerformed', ({ notification }) => {
+      const url = (notification.data as { url?: unknown } | undefined)?.url;
+      if (typeof url === 'string' && url.startsWith('/') && !url.startsWith('//')) navigate(url);
+    }),
+  ]).then(() => undefined);
 }
 
 export type NativePermission = 'granted' | 'denied' | 'prompt';
@@ -76,7 +151,76 @@ export async function notificationPermission(): Promise<NativePermission> {
 export async function requestNotificationPermission(): Promise<NativePermission> {
   if (!isNativeApp) return 'denied';
   const { display } = await LocalNotifications.requestPermissions();
-  return display === 'granted' ? 'granted' : display === 'denied' ? 'denied' : 'prompt';
+  if (display !== 'granted') return display === 'denied' ? 'denied' : 'prompt';
+  if (!firebaseAndroidConfigured) {
+    updatePushStatus('android-unconfigured');
+    return 'granted';
+  }
+  try {
+    const pushPermission = await PushNotifications.requestPermissions();
+    if (pushPermission.receive === 'granted') await registerNativePushToken();
+  } catch (error) {
+    updatePushStatus('error');
+    console.error('Could not request CareTrack push permission', error);
+  }
+  return 'granted';
+}
+
+/** Registers the signed-in Android device with FCM and CareTrack's authenticated API. */
+export async function registerNativePushToken(): Promise<void> {
+  if (!isNativeApp) return;
+  if (!firebaseAndroidConfigured) {
+    updatePushStatus('android-unconfigured');
+    return;
+  }
+  if (!pushListenersReady) {
+    updatePushStatus('error');
+    console.error('CareTrack push listeners have not been initialized');
+    return;
+  }
+  try {
+    await pushListenersReady;
+  } catch (error) {
+    updatePushStatus('error');
+    console.error('Could not initialize CareTrack push listeners', error);
+    return;
+  }
+  try {
+    if ((await notificationPermission()) !== 'granted') return;
+    const permission = await PushNotifications.checkPermissions();
+    if (permission.receive !== 'granted') return;
+    pushRegistrationRequested = true;
+    updatePushStatus('registering');
+    const saved = await Preferences.get({ key: PUSH_TOKEN_KEY });
+    pushToken = pushToken || saved.value;
+    if (pushToken) await savePushToken(pushToken);
+    await PushNotifications.register();
+  } catch (error) {
+    updatePushStatus('error');
+    console.error('Could not start CareTrack push registration', error);
+  }
+}
+
+/** Removes this device's FCM token before the current user signs out. */
+export async function unregisterNativePushToken(): Promise<void> {
+  if (!isNativeApp) return;
+  pushRegistrationRequested = false;
+  const saved = await Preferences.get({ key: PUSH_TOKEN_KEY });
+  const token = pushToken || saved.value;
+  if (!token) return;
+
+  const { url, headers } = await apiRequest('/api/push-tokens');
+  headers.set('content-type', 'application/json');
+  const response = await fetch(url, {
+    method: 'DELETE',
+    headers,
+    body: JSON.stringify({ token }),
+  });
+  if (!response.ok) throw new Error(`Push token removal failed (${response.status}).`);
+  if (firebaseAndroidConfigured) await PushNotifications.unregister();
+  await Preferences.remove({ key: PUSH_TOKEN_KEY });
+  pushToken = null;
+  updatePushStatus('idle');
 }
 /** Android 12+ may delay alarms unless "Alarms & reminders" is allowed for the app. */
 export async function exactAlarmsAllowed(): Promise<boolean> {

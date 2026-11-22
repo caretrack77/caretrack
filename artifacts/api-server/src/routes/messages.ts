@@ -22,6 +22,7 @@ import { canAccessPatient, canManagePatient, getVisiblePatientIds } from "../lib
 import { careTeamProviderIds } from "../lib/coverage";
 import { decryptText, encryptText, isEncrypted } from "../lib/encryption";
 import { publishUsers } from "../lib/realtime";
+import { sendMessagePush } from "../lib/push";
 
 const router: IRouter = Router();
 router.use(authenticate, requireUser);
@@ -239,16 +240,24 @@ router.post("/patients/:id/messages", async (req, res): Promise<void> => {
         ),
       )
       .limit(1);
-    if (existing) continue;
-    await db.insert(notificationsTable).values({
-      userId,
-      patientId,
-      kind: "message",
-      title: `New message from ${user.name}`,
-      // Message text stays encrypted in the messages table only.
-      message: "Open Messages to read it.",
-    });
+    const [notification] = existing
+      ? [existing]
+      : await db.insert(notificationsTable).values({
+          userId,
+          patientId,
+          kind: "message",
+          title: `New message from ${user.name}`,
+          // Message text stays encrypted in the messages table only.
+          message: "Open Messages to read it.",
+        }).returning({ id: notificationsTable.id });
     publishUsers([userId], { type: "notification", patientId });
+    if (notification) {
+      await sendMessagePush([userId], {
+        notificationId: notification.id,
+        url: `/messages?patient=${patientId}`,
+        kind: "message",
+      });
+    }
   }
   await writeAuditLog(user.id, "message_sent", "patient", patientId, { messageId: message.id });
   res.status(201).json(

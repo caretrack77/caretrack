@@ -1,3 +1,4 @@
+import { existsSync } from 'node:fs';
 import path from 'path';
 import react from '@vitejs/plugin-react';
 import tailwindcss from '@tailwindcss/vite';
@@ -13,6 +14,7 @@ if (Number.isNaN(port) || port <= 0) {
 
 // During development, API calls are proxied to the Express server.
 const apiTarget = `http://localhost:${env.PORT ?? 8080}`;
+const firebaseAndroidConfigured = existsSync(path.resolve(import.meta.dirname, 'android', 'app', 'google-services.json'));
 
 export default defineConfig({
   base: env.BASE_PATH ?? '/',
@@ -21,6 +23,7 @@ export default defineConfig({
     // Android app only: the public HTTPS address of the CareTrack server (not a secret).
     // When empty, the app asks for it on first launch. The web version ignores it.
     'import.meta.env.VITE_CARETRACK_API_URL': JSON.stringify(env.CARETRACK_API_URL ?? ''),
+    'import.meta.env.VITE_FIREBASE_ANDROID_CONFIGURED': JSON.stringify(firebaseAndroidConfigured),
   },
   resolve: {
     alias: {

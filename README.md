@@ -6,7 +6,7 @@ CareTrack helps patients, caregivers, and doctors coordinate medication schedule
 
 ## What is new
 
-The recent implementation work extended the original adherence tracker with health-aware risk prediction and reports, patient health recording, caregiver recording permissions, guarded chatbot answers, mobile/offline support, and authenticated live updates. CareTrack now also ships as a native **Android app (APK)** built with Capacitor, with on-device medication reminders and wellness tips that fire offline and with the app closed. The feature walkthrough below explains the user experience and the data flow; the change log records the corresponding implementation areas and how to demonstrate them.
+The recent implementation work extended the original adherence tracker with health-aware risk prediction and reports, patient health recording, caregiver recording permissions, guarded chatbot answers, mobile/offline support, and authenticated live updates. CareTrack also ships as a native **Android app (APK)** built with Capacitor, with offline medication reminders and wellness tips. Firebase Cloud Messaging can deliver generic message alerts while the Android app is backgrounded or closed when Firebase is configured; see [docs/ANDROID.md](docs/ANDROID.md). The feature walkthrough below explains the user experience and the data flow; the change log records the corresponding implementation areas and how to demonstrate them.
 
 ## Technology and architecture
 
@@ -20,7 +20,7 @@ The recent implementation work extended the original adherence tracker with heal
 | Reports | PDFKit PDF and CSV export |
 | API contract | OpenAPI 3.1, generated React Query client and Zod validators (Orval) |
 | Offline support | Installable PWA; IndexedDB saved data and outbox with automatic sync, idempotency keys and conflict checks (`src/offline.ts`) |
-| Android app | Capacitor 8 (Android), Local Notifications, Preferences, Filesystem/Share, Splash Screen |
+| Android app | Capacitor 8 (Android), Local and push notifications (Firebase Cloud Messaging), Preferences, Filesystem/Share, Splash Screen |
 
 ```text
 artifacts/

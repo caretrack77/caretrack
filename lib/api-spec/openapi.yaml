@@ -270,6 +270,23 @@ paths:
                 $ref: "#/components/schemas/User"
         "404":
           description: User not found
+    delete:
+      operationId: deleteUser
+      tags: [users]
+      summary: Delete a user
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: User deleted
+        "400":
+          description: Cannot delete own account
+        "404":
+          description: User not found
   /patients:
     get:
       operationId: listPatients
@@ -344,6 +361,21 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/Patient"
+        "404":
+          description: Patient not found
+    delete:
+      operationId: deletePatient
+      tags: [patients]
+      summary: Delete a patient
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "204":
+          description: Patient deleted
         "404":
           description: Patient not found
   /medications:
@@ -715,6 +747,55 @@ paths:
           content:
             application/json:
               schema: { $ref: "#/components/schemas/Coverage" }
+  /coverage/transfers:
+    get:
+      operationId: listPatientTransferRequests
+      tags: [users]
+      summary: Transfer requests visible to the signed-in doctor
+      responses:
+        "200":
+          description: Patient transfer requests
+          content:
+            application/json:
+              schema:
+                type: array
+                items: { $ref: "#/components/schemas/PatientTransferRequest" }
+    post:
+      operationId: createPatientTransferRequest
+      tags: [users]
+      summary: Request a permanent transfer of an assigned patient
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatientTransferRequestInput" }
+      responses:
+        "201":
+          description: Transfer request created
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PatientTransferRequest" }
+  /coverage/transfers/{id}/respond:
+    post:
+      operationId: respondToPatientTransferRequest
+      tags: [users]
+      summary: Accept or decline a patient transfer request
+      parameters:
+        - name: id
+          in: path
+          required: true
+          schema: { type: integer }
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema: { $ref: "#/components/schemas/PatientTransferDecision" }
+      responses:
+        "200":
+          description: Transfer request response
+          content:
+            application/json:
+              schema: { $ref: "#/components/schemas/PatientTransferRequest" }
   /coverage/{id}/end:
     post:
       operationId: endCoverage
@@ -1045,6 +1126,54 @@ paths:
               schema:
                 type: array
                 items: { $ref: "#/components/schemas/Notification" }
+  /push-tokens:
+    post:
+      operationId: registerPushToken
+      tags: [notifications]
+      summary: Register the signed-in Android app for message alerts
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token: { type: string, minLength: 1, maxLength: 4096 }
+              required: [token]
+      responses:
+        "200":
+          description: Token registered; reports whether server-side FCM credentials are configured
+          content:
+            application/json:
+              schema:
+                type: object
+                properties:
+                  deliveryConfigured: { type: boolean }
+                required: [deliveryConfigured]
+        "400":
+          description: Invalid push token
+        "403":
+          description: Android app required
+    delete:
+      operationId: removePushToken
+      tags: [notifications]
+      summary: Remove the signed-in Android app's push registration
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                token: { type: string, minLength: 1, maxLength: 4096 }
+              required: [token]
+      responses:
+        "204":
+          description: Push token removed
+        "400":
+          description: Invalid push token
+        "403":
+          description: Android app required
   /events:
     get:
       operationId: events
@@ -1402,6 +1531,33 @@ components:
         endDate: { type: ["string", "null"] }
         reason: { type: ["string", "null"], maxLength: 200 }
       required: [absentProviderId, coveringProviderId, startDate]
+    PatientTransferRequest:
+      type: object
+      properties:
+        id: { type: integer }
+        patientId: { type: integer }
+        patientName: { type: string }
+        fromProviderId: { type: integer }
+        fromProviderName: { type: string }
+        toProviderId: { type: integer }
+        toProviderName: { type: string }
+        reason: { type: ["string", "null"] }
+        status: { type: string, enum: [pending, accepted, declined] }
+        createdAt: { type: string, format: date-time }
+        respondedAt: { type: ["string", "null"], format: date-time }
+      required: [id, patientId, patientName, fromProviderId, fromProviderName, toProviderId, toProviderName, reason, status, createdAt, respondedAt]
+    PatientTransferRequestInput:
+      type: object
+      properties:
+        patientId: { type: integer, minimum: 1 }
+        toProviderId: { type: integer, minimum: 1 }
+        reason: { type: ["string", "null"], maxLength: 200 }
+      required: [patientId, toProviderId]
+    PatientTransferDecision:
+      type: object
+      properties:
+        decision: { type: string, enum: [accept, decline] }
+      required: [decision]
     DeliveryStatus:
       type: object
       properties:
@@ -1585,6 +1741,14 @@ components:
       type: object
       properties:
         message: { type: string, minLength: 1, maxLength: 500 }
+        history:
+          type: array
+          items:
+            type: object
+            properties:
+              role: { type: string, enum: [user, model] }
+              text: { type: string }
+            required: [role, text]
       required: [message]
     AssistantReply:
       type: object

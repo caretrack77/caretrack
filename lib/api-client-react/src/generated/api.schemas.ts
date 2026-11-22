@@ -125,6 +125,55 @@ export interface CoverageInput {
   reason?: string | null;
 }
 
+export type PatientTransferRequestStatus = typeof PatientTransferRequestStatus[keyof typeof PatientTransferRequestStatus];
+
+
+export const PatientTransferRequestStatus = {
+  pending: 'pending',
+  accepted: 'accepted',
+  declined: 'declined',
+} as const;
+
+export interface PatientTransferRequest {
+  id: number;
+  patientId: number;
+  patientName: string;
+  fromProviderId: number;
+  fromProviderName: string;
+  toProviderId: number;
+  toProviderName: string;
+  /** @nullable */
+  reason: string | null;
+  status: PatientTransferRequestStatus;
+  createdAt: string;
+  /** @nullable */
+  respondedAt: string | null;
+}
+
+export interface PatientTransferRequestInput {
+  /** @minimum 1 */
+  patientId: number;
+  /** @minimum 1 */
+  toProviderId: number;
+  /**
+     * @maxLength 200
+     * @nullable
+     */
+  reason?: string | null;
+}
+
+export type PatientTransferDecisionDecision = typeof PatientTransferDecisionDecision[keyof typeof PatientTransferDecisionDecision];
+
+
+export const PatientTransferDecisionDecision = {
+  accept: 'accept',
+  decline: 'decline',
+} as const;
+
+export interface PatientTransferDecision {
+  decision: PatientTransferDecisionDecision;
+}
+
 export interface DeliveryStatus {
   emailConfigured: boolean;
   /** @nullable */
@@ -379,13 +428,26 @@ export interface AppointmentUpdate {
   notes?: string | null;
 }
 
+export type AssistantInputHistoryItemRole = typeof AssistantInputHistoryItemRole[keyof typeof AssistantInputHistoryItemRole];
+
+
+export const AssistantInputHistoryItemRole = {
+  user: 'user',
+  model: 'model',
+} as const;
+
+export type AssistantInputHistoryItem = {
+  role: AssistantInputHistoryItemRole;
+  text: string;
+};
+
 export interface AssistantInput {
   /**
      * @minLength 1
      * @maxLength 500
      */
   message: string;
-  history?: { role: 'user' | 'model'; text: string }[];
+  history?: AssistantInputHistoryItem[];
 }
 
 export interface AssistantReply {
@@ -1118,6 +1180,26 @@ from?: string;
 to?: string;
 patientId?: number;
 medicationId?: number;
+};
+
+export type RegisterPushTokenBody = {
+  /**
+     * @minLength 1
+     * @maxLength 4096
+     */
+  token: string;
+};
+
+export type RegisterPushToken200 = {
+  deliveryConfigured: boolean;
+};
+
+export type RemovePushTokenBody = {
+  /**
+     * @minLength 1
+     * @maxLength 4096
+     */
+  token: string;
 };
 
 export type ListAuditLogsParams = {

@@ -11,6 +11,7 @@ import {
   UpdatePatientBody,
   UpdatePatientParams,
   UpdatePatientResponse,
+  DeletePatientParams,
 } from "@workspace/api-zod";
 import {
   db,
@@ -253,8 +254,7 @@ router.patch(
     if (parsed.data.allergies !== undefined) changes.allergies = parsed.data.allergies;
     if (parsed.data.notes !== undefined) changes.notes = parsed.data.notes?.trim() || null;
     if (parsed.data.active !== undefined) changes.active = parsed.data.active;
-    const reassignTo = parsed.data.assignedProviderId ?? null;
-    if (Object.keys(changes).length === 0 && reassignTo === null) {
+    if (Object.keys(changes).length === 0) {
       res.status(400).json({ error: "Provide at least one field to update." });
       return;
     }
@@ -270,31 +270,10 @@ router.patch(
         await db.update(usersTable).set(accountChanges).where(eq(usersTable.id, patientLink.userId));
       }
     }
-    const patient = { id: params.data.id };
-    if (reassignTo !== null) {
-      const before = await patientApiRecord(patient.id);
-      if (before?.assignedProviderId !== reassignTo) {
-        if (!(await assignProvider(patient.id, reassignTo))) {
-          res.status(400).json({ error: "Choose an active doctor to assign." });
-          return;
-        }
-        await writeAuditLog(user.id, "patient_reassigned", "patient", patient.id, {
-          from: before?.assignedProviderId ?? null,
-          to: reassignTo,
-        });
-        await db.insert(notificationsTable).values({
-          userId: reassignTo,
-          patientId: patient.id,
-          kind: "coverage",
-          title: `New patient assigned: ${before?.name ?? "patient"}`,
-          message: `${user.name} assigned this patient to you${before?.assignedProviderName ? ` (previously with ${before.assignedProviderName})` : ""}.`,
-        });
-      }
-    }
-    await writeAuditLog(user.id, "update", "patient", patient.id, {
+    await writeAuditLog(user.id, "update", "patient", params.data.id, {
       changedFields: Object.keys(changes),
     });
-    res.json(UpdatePatientResponse.parse(await patientApiRecord(patient.id)));
+    res.json(UpdatePatientResponse.parse(await patientApiRecord(params.data.id)));
   },
 );
 
@@ -352,6 +331,39 @@ router.post(
       .where(eq(patientsTable.id, patient.id));
     await writeAuditLog(user.id, "patient_account_created", "patient", patient.id, { userId: account.id });
     res.status(201).json({ userId: account.id, email: account.email });
+  },
+);
+
+
+router.delete(
+  "/patients/:id",
+  requireRoles("admin", "provider"),
+  async (req, res): Promise<void> => {
+    const params = DeletePatientParams.safeParse(req.params);
+    if (!params.success) {
+      res.status(400).json({ error: params.error.message });
+      return;
+    }
+    const user = currentUser(res)!;
+    if (!(await canManagePatient(user, params.data.id))) {
+      res.status(404).json({ error: "Patient not found." });
+      return;
+    }
+    const [patient] = await db
+      .select({ id: patientsTable.id, name: patientsTable.name, userId: patientsTable.userId })
+      .from(patientsTable)
+      .where(eq(patientsTable.id, params.data.id))
+      .limit(1);
+    if (!patient) {
+      res.status(404).json({ error: "Patient not found." });
+      return;
+    }
+    await db.delete(patientsTable).where(eq(patientsTable.id, params.data.id));
+    if (patient.userId) {
+      await db.delete(usersTable).where(and(eq(usersTable.id, patient.userId), eq(usersTable.role, "patient")));
+    }
+    await writeAuditLog(user.id, "delete", "patient", patient.id, { name: patient.name });
+    res.status(204).end();
   },
 );
 

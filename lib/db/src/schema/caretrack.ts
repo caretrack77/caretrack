@@ -348,6 +348,27 @@ export const notificationsTable = pgTable(
   ],
 );
 
+export const pushTokensTable = pgTable(
+  "caretrack_push_tokens",
+  {
+    id: serial("id").primaryKey(),
+    userId: integer("user_id")
+      .notNull()
+      .references(() => usersTable.id, { onDelete: "cascade" }),
+    token: text("token").notNull(),
+    createdAt: timestamp("created_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+    updatedAt: timestamp("updated_at", { withTimezone: true })
+      .notNull()
+      .defaultNow(),
+  },
+  (table) => [
+    uniqueIndex("caretrack_push_tokens_token_idx").on(table.token),
+    index("caretrack_push_tokens_user_idx").on(table.userId),
+  ],
+);
+
 export const aiInsightsTable = pgTable(
   "caretrack_ai_insights",
   {
@@ -551,6 +572,25 @@ export const providerCoverageTable = pgTable(
   (table) => [
     index("caretrack_coverage_absent_idx").on(table.absentProviderId),
     index("caretrack_coverage_covering_idx").on(table.coveringProviderId),
+  ],
+);
+
+export const patientTransferRequestsTable = pgTable(
+  "caretrack_patient_transfer_requests",
+  {
+    id: serial("id").primaryKey(),
+    patientId: integer("patient_id").notNull().references(() => patientsTable.id, { onDelete: "cascade" }),
+    fromProviderId: integer("from_provider_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+    toProviderId: integer("to_provider_id").notNull().references(() => usersTable.id, { onDelete: "cascade" }),
+    reason: text("reason"),
+    status: text("status").notNull().default("pending"),
+    createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
+    respondedAt: timestamp("responded_at", { withTimezone: true }),
+  },
+  (table) => [
+    index("caretrack_patient_transfer_requests_from_idx").on(table.fromProviderId, table.status),
+    index("caretrack_patient_transfer_requests_to_idx").on(table.toProviderId, table.status),
+    index("caretrack_patient_transfer_requests_patient_idx").on(table.patientId),
   ],
 );
 

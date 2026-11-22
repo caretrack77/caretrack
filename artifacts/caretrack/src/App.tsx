@@ -1,18 +1,18 @@
 import { useEffect, useRef, useState, useSyncExternalStore, type FormEvent, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { QueryClient, QueryClientProvider, useQueryClient } from '@tanstack/react-query';
+import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from '@tanstack/react-query';
 import { Link, Redirect, Route, Switch, useLocation, useParams } from 'wouter';
 import {
   Activity, ArrowLeft, ArrowRight, BarChart3, Bell, CalendarDays, Check, Clock3, CircleHelp,
   ArrowLeftRight, ClipboardList, Download, Eye, EyeOff, FileText, KeyRound, UserPlus, HeartPulse, LayoutDashboard, LogOut, Mail, Menu, MessageSquare, Plus, Pill,
-  Search, Send, ShieldCheck, Sparkles, Stethoscope, Users, Wifi, WifiOff, X, MessagesSquare, ChevronLeft, ChevronRight, RefreshCw,
+  Search, Send, ShieldCheck, Sparkles, Stethoscope, Users, Wifi, WifiOff, X, MessagesSquare, ChevronLeft, ChevronRight, RefreshCw, Trash2, AlertTriangle, CheckCircle2,
 } from 'lucide-react';
 import {
   getGetAnalyticsQueryKey, getGetPatientQueryKey, getListAuditLogsQueryKey,
   getListDosesQueryKey, getListMedicationsQueryKey, getListNotificationsQueryKey,
   getListPatientInsightsQueryKey, getListReportSchedulesQueryKey, getListReportsQueryKey,
   getListPatientsQueryKey, getListUsersQueryKey, useCreateDemoDose, useCreateMedication, useCreatePatient,
-  useCreateReportSchedule, useCreateUser, useDeleteMedication, useGeneratePatientInsight,
+  useCreateReportSchedule, useCreateUser, useDeleteMedication, useDeleteUser, useDeletePatient, useGeneratePatientInsight,
   useGenerateReport, useGetAnalytics, useGetCurrentUser, useGetPatient, useListAuditLogs,
   useListDoses, useListMedications, useListNotifications, useListPatientInsights, useListPatients,
   useListReportSchedules, useListReports, useListUsers, useLogin, useLogout, useMarkNotificationRead, useSimulateOverdueDoses,
@@ -23,7 +23,7 @@ import { useListMessageCalendar, getListMessageCalendarQueryKey, useListStaffThr
 import { customFetch, OfflineError } from '@workspace/api-client-react';
 import { Bar, BarChart, CartesianGrid, Cell, Legend, Line, LineChart, Pie, PieChart, ReferenceLine, ResponsiveContainer, Tooltip, XAxis, YAxis } from 'recharts';
 import { builtInServerUrl, clearNativeSession, getServerUrl, isNativeApp, normalizeServerUrl, openProtectedFile, saveServerUrl, streamServerEvents, testServer } from './native';
-import { clearNativeNotifications, exactAlarmsAllowed, notificationPermission, openExactAlarmSettings, previewNativeWellness, requestNotificationPermission, showNativeAlert, syncNativeDoseReminders, syncNativeWellness } from './native-notifications';
+import { clearNativeNotifications, exactAlarmsAllowed, getNativePushStatus, notificationPermission, openExactAlarmSettings, previewNativeWellness, registerNativePushToken, requestNotificationPermission, showNativeAlert, syncNativeDoseReminders, syncNativeWellness, unregisterNativePushToken, type NativePushStatus } from './native-notifications';
 import { clearSavedData, discardChange, getSyncSnapshot, keepMine, onSyncComplete, retryAll, subscribeSync, syncErrorOf, syncStateOf, unsyncedCount, type SyncState } from './offline';
 import { clock12, dateTimeLabel, parseClockList, timeLabel } from './time-format';
 import { initials, shortName } from './names';
@@ -224,18 +224,31 @@ function AuthenticatedApp() {
     const waiting = unsyncedCount();
     if (waiting && !window.confirm(`${waiting} change${waiting === 1 ? ' is' : 's are'} saved on this device but not uploaded yet. They stay on this device and upload the next time you sign in. Sign out now?`)) return;
     const done = () => { client.clear(); clearOfflineData(); setLocation('/login'); };
-    logout.mutate(undefined, { onSuccess: done, onError: (err) => {
+    const performLogout = () => logout.mutate(undefined, { onSuccess: done, onError: (err) => {
       if (!(err instanceof OfflineError) || isNativeApp) { done(); return; }
       // The browser's sign-in cookie can only be ended by the server.
       window.alert('You’re offline. Signing out of the website needs an internet connection. Please try again when you’re connected.');
     } });
+    if (isNativeApp) {
+      void unregisterNativePushToken().catch((error: unknown) => console.error('Could not remove push registration before sign-out', error)).finally(performLogout);
+    } else {
+      performLogout();
+    }
   };
   const [mobileNav,setMobileNav]=useState(false),[helpOpen,setHelpOpen]=useState(false);
   const doseAlerts=useDoseDueAlerts(user??({id:0,role:'admin'} as AuthUser),ready);
   // Android back button closes the menu first (see native.ts).
   useEffect(()=>{const close=()=>setMobileNav(false);window.addEventListener('caretrack-close-nav',close);return()=>window.removeEventListener('caretrack-close-nav',close)},[]);
   // Refresh server-backed queries when the Android app returns from the background.
-  useEffect(()=>{const refresh=()=>{if(document.visibilityState==='visible')void client.invalidateQueries()};document.addEventListener('visibilitychange',refresh);window.addEventListener('focus',refresh);window.addEventListener('caretrack-app-resumed',refresh);return()=>{document.removeEventListener('visibilitychange',refresh);window.removeEventListener('focus',refresh);window.removeEventListener('caretrack-app-resumed',refresh)}},[]);
+  useEffect(()=>{const refresh=()=>{if(document.visibilityState==='visible')void client.invalidateQueries()};document.addEventListener('visibilitychange',refresh);window.addEventListener('focus',refresh);window.addEventListener('caretrack-app-resumed',refresh);window.addEventListener('caretrack-push-received',refresh);return()=>{document.removeEventListener('visibilitychange',refresh);window.removeEventListener('focus',refresh);window.removeEventListener('caretrack-app-resumed',refresh);window.removeEventListener('caretrack-push-received',refresh)}},[]);
+  useEffect(()=>{
+    if(!isNativeApp||!ready)return;
+    const register=()=>{void registerNativePushToken()};
+    register();
+    window.addEventListener('caretrack-app-resumed',register);
+    window.addEventListener('online',register);
+    return()=>{window.removeEventListener('caretrack-app-resumed',register);window.removeEventListener('online',register)};
+  },[ready,user?.id]);
   if (noServer) return <LoginRedirect/>;
   if (me.isLoading) return <LoadingScreen/>;
   if (me.isError || !user) return <LoginRedirect/>;
@@ -304,10 +317,14 @@ function useRealtimeEvents(enabled: boolean) {
     try { data = raw ? JSON.parse(raw) : {}; } catch { /* non-message SSE keepalive */ }
     qc.invalidateQueries({ queryKey: getListMessageThreadsQueryKey() });
     qc.invalidateQueries({ queryKey: getListNotificationsQueryKey() });
+    qc.invalidateQueries({ queryKey: ['coverage-transfers'] });
     // Admin–doctor messages and the Messages calendar refresh on the same events.
     qc.invalidateQueries({ queryKey: getListStaffThreadsQueryKey() });
     qc.invalidateQueries({ predicate: (q) => String(q.queryKey[0]).startsWith('/api/staff-messages/') || String(q.queryKey[0]).startsWith('/api/messages/calendar') });
-    if (data.patientId) qc.invalidateQueries({ queryKey: getListPatientMessagesQueryKey(data.patientId) });
+    if (data.patientId) {
+      qc.invalidateQueries({ queryKey: getListPatientMessagesQueryKey(data.patientId) });
+      qc.invalidateQueries({ queryKey: getListPatientsQueryKey() });
+    }
   };
   // Android app: EventSource can't send the session token, so the stream is read with fetch.
   // It reconnects after a drop or when the connection returns; polling still covers the gaps.
@@ -358,7 +375,7 @@ function NotificationBell({user,readOnly}:{user:AuthUser;readOnly:boolean}){
   // Close with Escape, and when the Android back button closes the menu.
   useEffect(()=>{if(!open)return;const key=(e:KeyboardEvent)=>{if(e.key==='Escape')setOpen(false)};const close=()=>setOpen(false);window.addEventListener('keydown',key);window.addEventListener('caretrack-close-nav',close);return()=>{window.removeEventListener('keydown',key);window.removeEventListener('caretrack-close-nav',close)}},[open]);
   const refresh=()=>qc.invalidateQueries({queryKey:getListNotificationsQueryKey()});
-  const read=(item:Notification)=>{if(item.kind==='reminder'||item.kind==='overdue'){setOpen(false);go('/today')}else if((item.kind==='ai-risk'||item.kind==='risk'||item.kind==='lab')&&item.patientId&&user.role!=='patient'&&user.role!=='caregiver'){setOpen(false);go(`/patients/${item.patientId}`)}else if(item.kind==='lab'){setOpen(false);go('/today')}else if(item.kind==='appointment'){setOpen(false);go('/appointments')}else if(item.kind==='prescription'){setOpen(false);go('/prescriptions')}else if(item.kind==='message'){setOpen(false);go(item.patientId?`/messages?patient=${item.patientId}`:'/messages')}else if(item.kind==='staff-message'){setOpen(false);go('/team-messages')}if(item.read||readOnly)return;mark.mutate({id:item.id},{onSuccess:refresh})};
+  const read=(item:Notification)=>{if(item.kind==='reminder'||item.kind==='overdue'){setOpen(false);go('/today')}else if(item.kind==='coverage'){setOpen(false);go('/coverage')}else if((item.kind==='ai-risk'||item.kind==='risk'||item.kind==='lab')&&item.patientId&&user.role!=='patient'&&user.role!=='caregiver'){setOpen(false);go(`/patients/${item.patientId}`)}else if(item.kind==='lab'){setOpen(false);go('/today')}else if(item.kind==='appointment'){setOpen(false);go('/appointments')}else if(item.kind==='prescription'){setOpen(false);go('/prescriptions')}else if(item.kind==='message'){setOpen(false);go(item.patientId?`/messages?patient=${item.patientId}`:'/messages')}else if(item.kind==='staff-message'){setOpen(false);go('/team-messages')}if(item.read||readOnly)return;mark.mutate({id:item.id},{onSuccess:refresh})};
   const markAll=()=>{const ids=notifications.filter(n=>!n.read).map(n=>n.id);void Promise.all(ids.map(id=>mark.mutateAsync({id}).catch(()=>null))).then(refresh)};
   const KIND:Record<string,{label:string;icon:typeof Bell;tone:string}>={
     reminder:{label:'Dose due',icon:Pill,tone:'bg-[#fbf1df] text-[#99702f]'},
@@ -370,6 +387,7 @@ function NotificationBell({user,readOnly}:{user:AuthUser;readOnly:boolean}){
     lab:{label:'Lab result',icon:FileText,tone:'bg-[#e5f5ee] text-[#28745a]'},
     'ai-risk':{label:'Risk alert',icon:Activity,tone:'bg-[#fff0eb] text-[#ad5b45]'},
     risk:{label:'Adherence alert',icon:Activity,tone:'bg-[#fff0eb] text-[#ad5b45]'},
+    coverage:{label:'Patient transfer',icon:ArrowLeftRight,tone:'bg-[#e9f2f6] text-[#366a7d]'},
   };
   const when=(value:string)=>{const d=new Date(value);return d.toLocaleDateString('en-CA')===dateToday()?`Today, ${timeLabel(value)}`:dateTimeLabel(value)};
   return <div className="relative">
@@ -391,19 +409,729 @@ function NotificationBell({user,readOnly}:{user:AuthUser;readOnly:boolean}){
   </div>;
 }
 
+
+/**
+ * Administrator Dashboard: Comprehensive command center with full CRUD for Doctors and Patients,
+ * account provisioning, and system-wide adherence monitoring.
+ */
+function AdminDashboard({ user }: { user: AuthUser }) {
+  const usersQuery = useListUsers({ query: { enabled: user.role === 'admin', queryKey: getListUsersQueryKey() } });
+  const patientsQuery = useListPatients();
+  const dosesQuery = useListDoses({ date: dateToday() });
+  const medsQuery = useListMedications();
+  const deleteUserMutation = useDeleteUser();
+  const updateUserMutation = useUpdateUser();
+  const deletePatientMutation = useDeletePatient();
+  const updatePatientMutation = useUpdatePatient();
+  const createDemo = useCreateDemoDose();
+  const simulate = useSimulateOverdueDoses();
+  const qc = useQueryClient();
+
+  const [activeTab, setActiveTab] = useState<'doctors' | 'patients' | 'overview'>('doctors');
+  const [demoFeedback, setDemoFeedback] = useState('');
+
+  // Modals state
+  const [doctorModalOpen, setDoctorModalOpen] = useState(false);
+  const [editingDoctor, setEditingDoctor] = useState<User | null>(null);
+  const [patientModalOpen, setPatientModalOpen] = useState(false);
+  const [editingPatient, setEditingPatient] = useState<Patient | null>(null);
+  const [accountModalOpen, setAccountModalOpen] = useState(false);
+  const [accountTargetPatient, setAccountTargetPatient] = useState<Patient | null>(null);
+
+  // Search & filter state
+  const [doctorSearch, setDoctorSearch] = useState('');
+  const [doctorFilter, setDoctorFilter] = useState<'all' | 'active' | 'inactive'>('all');
+  const [patientSearch, setPatientSearch] = useState('');
+  const [patientFilter, setPatientFilter] = useState<'all' | 'active' | 'inactive' | 'no-account' | 'has-account'>('all');
+
+  const allUsers = usersQuery.data || [];
+  const doctors = allUsers.filter((u) => u.role === 'provider');
+  const patients = patientsQuery.data || [];
+  const doses = dosesQuery.data || [];
+  const meds = medsQuery.data || [];
+
+  const activeDoctors = doctors.filter((d) => d.active);
+  const activePatients = patients.filter((p) => p.active);
+  const patientsWithAccount = patients.filter((p) => p.userId);
+  const patientsWithoutAccount = patients.filter((p) => !p.userId);
+
+  const completedDoses = doses.filter((d) => d.status === 'taken').length;
+  const totalDoses = doses.length;
+  const adherencePercent = totalDoses ? Math.round((completedDoses / totalDoses) * 100) : 0;
+
+  // Filtered doctors
+  const filteredDoctors = doctors.filter((doc) => {
+    const matchesSearch = `${doc.name} ${doc.email} ${doc.phone || ''}`.toLowerCase().includes(doctorSearch.toLowerCase());
+    const matchesFilter =
+      doctorFilter === 'all' ? true : doctorFilter === 'active' ? doc.active : !doc.active;
+    return matchesSearch && matchesFilter;
+  });
+
+  // Filtered patients
+  const filteredPatients = patients.filter((pat) => {
+    const matchesSearch = `${pat.name} ${pat.email || ''} ${pat.phone || ''} ${pat.conditions?.join(' ') || ''} ${pat.assignedProviderName || ''}`
+      .toLowerCase()
+      .includes(patientSearch.toLowerCase());
+    const matchesFilter =
+      patientFilter === 'all'
+        ? true
+        : patientFilter === 'active'
+        ? pat.active
+        : patientFilter === 'inactive'
+        ? !pat.active
+        : patientFilter === 'no-account'
+        ? !pat.userId
+        : !!pat.userId;
+    return matchesSearch && matchesFilter;
+  });
+
+  const getDoctorAssignedCount = (docId: number) =>
+    patients.filter((p) => p.assignedProviderId === docId).length;
+
+  const handleDeleteDoctor = (doc: User) => {
+    if (!window.confirm(`Are you sure you want to permanently delete Dr. ${doc.name}? Assigned patients will need to be reassigned.`)) return;
+    deleteUserMutation.mutate(
+      { id: doc.id },
+      {
+        onSuccess: () => {
+          qc.invalidateQueries({ queryKey: getListUsersQueryKey() });
+          qc.invalidateQueries({ queryKey: getListPatientsQueryKey() });
+        },
+      }
+    );
+  };
+
+  const handleToggleDoctorStatus = (doc: User) => {
+    updateUserMutation.mutate(
+      { id: doc.id, data: { active: !doc.active } },
+      {
+        onSuccess: () => qc.invalidateQueries({ queryKey: getListUsersQueryKey() }),
+      }
+    );
+  };
+
+  const handleDeletePatient = (pat: Patient) => {
+    if (!window.confirm(`Are you sure you want to permanently delete patient ${pat.name}? This will remove all associated medication records.`)) return;
+    deletePatientMutation.mutate(
+      { id: pat.id },
+      {
+        onSuccess: () => {
+          qc.invalidateQueries({ queryKey: getListPatientsQueryKey() });
+          qc.invalidateQueries({ queryKey: getListUsersQueryKey() });
+        },
+      }
+    );
+  };
+
+  const handleTogglePatientStatus = (pat: Patient) => {
+    updatePatientMutation.mutate(
+      { id: pat.id, data: { active: !pat.active } },
+      {
+        onSuccess: () => {
+          qc.invalidateQueries({ queryKey: getListPatientsQueryKey() });
+          qc.invalidateQueries({ queryKey: getGetPatientQueryKey(pat.id) });
+        },
+      }
+    );
+  };
+
+  const refreshDemo = () => {
+    qc.invalidateQueries({ queryKey: getListDosesQueryKey() });
+    qc.invalidateQueries({ queryKey: getListNotificationsQueryKey() });
+    qc.invalidateQueries({ queryKey: getGetAnalyticsQueryKey() });
+  };
+
+  const addDemo = () => {
+    const p = activePatients.find((x) => x.userId) || activePatients[0];
+    const m = (medsQuery.data || []).find((x) => x.patientId === p?.id && x.active);
+    if (!p || !m) {
+      setDemoFeedback('Add an active medication to a patient first.');
+      return;
+    }
+    createDemo.mutate(
+      { data: { patientId: p.id, medicationId: m.id } },
+      {
+        onSuccess: () => {
+          refreshDemo();
+          setDemoFeedback(`${m.name} for ${p.name} is now due. A reminder was sent.`);
+        },
+        onError: () => setDemoFeedback('Could not create a demo dose.'),
+      }
+    );
+  };
+
+  const simulateNow = () =>
+    simulate.mutate(undefined, {
+      onSuccess: (r) => {
+        refreshDemo();
+        setDemoFeedback(
+          r.missedCount
+            ? `Simulated 2 hours passing: ${r.missedCount} overdue dose${r.missedCount === 1 ? ' was' : 's were'} marked missed.`
+            : 'No doses are currently due. Add a demo dose first, then simulate time.'
+        );
+      },
+      onError: () => setDemoFeedback('Could not run the simulation.'),
+    });
+
+  const loading = usersQuery.isLoading || patientsQuery.isLoading;
+
+  return (
+    <div className="page-enter">
+      <PageHeading
+        eyebrow="Administrator Command Center"
+        title={`Admin Dashboard · ${shortName(user.name)}`}
+        description="Full CRUD management for doctors and patients, account provisioning, and system adherence overview."
+        action={
+          <div className="flex flex-wrap gap-2">
+            <button
+              data-testid="button-admin-add-doctor"
+              onClick={() => { setEditingDoctor(null); setDoctorModalOpen(true); }}
+              className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#17647a] px-4 text-sm font-semibold text-white shadow-sm hover:bg-[#125366]"
+            >
+              <Stethoscope size={16} /> Add doctor
+            </button>
+            <button
+              data-testid="button-admin-add-patient"
+              onClick={() => { setEditingPatient(null); setPatientModalOpen(true); }}
+              className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#c8e2df] bg-white px-4 text-sm font-semibold text-[#247b79] hover:bg-[#eef9f6]"
+            >
+              <Plus size={16} /> Add patient
+            </button>
+            <button
+              data-testid="button-admin-add-patient-account"
+              onClick={() => { setAccountTargetPatient(null); setAccountModalOpen(true); }}
+              className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#c8e2df] bg-white px-4 text-sm font-semibold text-[#247b79] hover:bg-[#eef9f6]"
+            >
+              <KeyRound size={16} /> Add patient account
+            </button>
+          </div>
+        }
+      />
+
+      {demoFeedback && (
+        <div data-testid="status-demo-feedback" role="status" className="mb-5 flex items-start justify-between gap-3 rounded-xl border border-[#cfe7df] bg-[#eef8f4] px-4 py-3 text-sm text-[#37796b]">
+          <span>{demoFeedback}</span>
+          <button aria-label="Dismiss" onClick={() => setDemoFeedback('')} className="text-[#5d8f86]">
+            <X size={15} />
+          </button>
+        </div>
+      )}
+
+      {loading ? (
+        <SkeletonGrid />
+      ) : (
+        <>
+          {/* KPI Summary Cards */}
+          <div className="grid gap-4 sm:grid-cols-2 xl:grid-cols-4">
+            <Metric
+              label="Doctors on staff"
+              value={`${doctors.length}`}
+              detail={`${activeDoctors.length} active · ${doctors.length - activeDoctors.length} inactive`}
+              icon={Stethoscope}
+              accent="teal"
+            />
+            <Metric
+              label="Patient directory"
+              value={`${patients.length}`}
+              detail={`${activePatients.length} active profiles`}
+              icon={Users}
+              accent="blue"
+            />
+            <Metric
+              label="Patient logins"
+              value={`${patientsWithAccount.length} / ${patients.length}`}
+              detail={`${patientsWithoutAccount.length} missing mobile logins`}
+              icon={KeyRound}
+              accent="gold"
+              progress={patients.length ? Math.round((patientsWithAccount.length / patients.length) * 100) : 0}
+            />
+            <Metric
+              label="Today’s adherence"
+              value={totalDoses ? `${adherencePercent}%` : '—'}
+              detail={`${completedDoses} of ${totalDoses} doses logged`}
+              icon={Activity}
+              accent="teal"
+              progress={adherencePercent}
+            />
+          </div>
+
+          {/* Tab Navigation */}
+          <div className="mt-7 flex flex-wrap items-center gap-2 border-b border-[#eaf0f0] pb-3" role="tablist">
+            <button
+              role="tab"
+              aria-selected={activeTab === 'doctors'}
+              data-testid="tab-admin-doctors"
+              onClick={() => setActiveTab('doctors')}
+              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition ${
+                activeTab === 'doctors'
+                  ? 'bg-[#17647a] text-white shadow-sm'
+                  : 'bg-white text-[#52737c] hover:bg-[#f0f6f6]'
+              }`}
+            >
+              <Stethoscope size={16} /> Doctor Management (CRUD)
+              <span className={`rounded-full px-2 py-0.5 text-xs ${activeTab === 'doctors' ? 'bg-white/20 text-white' : 'bg-[#eef5f5] text-[#54747a]'}`}>
+                {doctors.length}
+              </span>
+            </button>
+            <button
+              role="tab"
+              aria-selected={activeTab === 'patients'}
+              data-testid="tab-admin-patients"
+              onClick={() => setActiveTab('patients')}
+              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition ${
+                activeTab === 'patients'
+                  ? 'bg-[#17647a] text-white shadow-sm'
+                  : 'bg-white text-[#52737c] hover:bg-[#f0f6f6]'
+              }`}
+            >
+              <Users size={16} /> Patient Management (CRUD)
+              <span className={`rounded-full px-2 py-0.5 text-xs ${activeTab === 'patients' ? 'bg-white/20 text-white' : 'bg-[#eef5f5] text-[#54747a]'}`}>
+                {patients.length}
+              </span>
+            </button>
+            <button
+              role="tab"
+              aria-selected={activeTab === 'overview'}
+              data-testid="tab-admin-overview"
+              onClick={() => setActiveTab('overview')}
+              className={`inline-flex items-center gap-2 rounded-xl px-4 py-2 text-sm font-bold transition ${
+                activeTab === 'overview'
+                  ? 'bg-[#17647a] text-white shadow-sm'
+                  : 'bg-white text-[#52737c] hover:bg-[#f0f6f6]'
+              }`}
+            >
+              <LayoutDashboard size={16} /> Overview &amp; Doses
+            </button>
+          </div>
+
+          {/* TAB 1: DOCTORS CRUD */}
+          {activeTab === 'doctors' && (
+            <Card className="mt-5">
+              <div className="flex flex-col gap-4 border-b border-[#eaf0f0] p-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                <div>
+                  <h2 className="text-lg font-bold text-[#254954]">Doctors Directory &amp; Access</h2>
+                  <p className="mt-1 text-xs text-[#81969b]">Create, update, deactivate, or delete doctors on your medical staff.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="flex h-10 items-center gap-2 rounded-xl border border-[#dce8e8] bg-[#fbfdfd] px-3 sm:w-64">
+                    <Search size={15} className="text-[#81969b]" />
+                    <input
+                      data-testid="input-search-doctors"
+                      value={doctorSearch}
+                      onChange={(e) => setDoctorSearch(e.target.value)}
+                      placeholder="Search doctors…"
+                      className="w-full bg-transparent text-sm outline-none placeholder:text-[#a3b3b6]"
+                    />
+                  </label>
+                  <button
+                    data-testid="button-crud-add-doctor"
+                    onClick={() => { setEditingDoctor(null); setDoctorModalOpen(true); }}
+                    className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#17647a] px-3.5 text-xs font-semibold text-white hover:bg-[#125366]"
+                  >
+                    <Plus size={15} /> Add doctor
+                  </button>
+                </div>
+              </div>
+
+              {/* Filter Pills */}
+              <div className="flex flex-wrap gap-2 border-b border-[#edf2f2] px-5 py-3 sm:px-6">
+                {(['all', 'active', 'inactive'] as const).map((mode) => (
+                  <button
+                    key={mode}
+                    data-testid={`filter-doctor-${mode}`}
+                    onClick={() => setDoctorFilter(mode)}
+                    className={`rounded-full border px-3 py-1 text-xs font-semibold capitalize transition ${
+                      doctorFilter === mode
+                        ? 'border-[#17647a] bg-[#17647a] text-white'
+                        : 'border-[#dce8e8] bg-white text-[#55737a] hover:bg-[#f6f9f9]'
+                    }`}
+                  >
+                    {mode} ({mode === 'all' ? doctors.length : mode === 'active' ? activeDoctors.length : doctors.length - activeDoctors.length})
+                  </button>
+                ))}
+              </div>
+
+              {/* Doctors List */}
+              {filteredDoctors.length === 0 ? (
+                <EmptyState
+                  title={doctorSearch ? 'No doctors match your search' : 'No doctors registered yet'}
+                  body={doctorSearch ? 'Try adjusting your search criteria.' : 'Click "Add doctor" above to onboard your first medical provider.'}
+                  icon={Stethoscope}
+                />
+              ) : (
+                <div className="divide-y divide-[#edf2f2]">
+                  {filteredDoctors.map((doc) => {
+                    const assignedCount = getDoctorAssignedCount(doc.id);
+                    return (
+                      <div
+                        key={doc.id}
+                        data-testid={`row-admin-doctor-${doc.id}`}
+                        className="flex flex-col gap-3 p-5 transition hover:bg-[#fbfdfd] sm:flex-row sm:items-center sm:justify-between sm:px-6"
+                      >
+                        <div className="flex items-start gap-3 min-w-0 flex-1">
+                          <Avatar name={doc.name} />
+                          <div className="min-w-0 flex-1">
+                            <div className="flex flex-wrap items-center gap-2">
+                              <span className="truncate text-sm font-bold text-[#31535e]">{doc.name}</span>
+                              <StatusPill status={doc.active ? 'active' : 'inactive'} />
+                              {doc.phoneVerified && (
+                                <span className="rounded-full bg-[#e5f5ee] px-2 py-0.5 text-[10px] font-semibold text-[#28745a]">
+                                  SMS Verified
+                                </span>
+                              )}
+                              {doc.mustChangePassword && (
+                                <span className="rounded-full bg-[#fbf1df] px-2 py-0.5 text-[10px] font-semibold text-[#99702f]">
+                                  Temp password
+                                </span>
+                              )}
+                            </div>
+                            <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#81969b]">
+                              <span>{doc.email}</span>
+                              {doc.phone && <span>· {doc.phone}</span>}
+                              <span>· Joined {new Date(doc.createdAt).toLocaleDateString()}</span>
+                            </div>
+                            <div className="mt-2">
+                              <span className="inline-flex items-center gap-1 rounded-md bg-[#eef7f9] px-2 py-1 text-xs font-semibold text-[#1c6476]">
+                                <Users size={12} /> {assignedCount} assigned {assignedCount === 1 ? 'patient' : 'patients'}
+                              </span>
+                            </div>
+                          </div>
+                        </div>
+
+                        {/* Actions */}
+                        <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                          <button
+                            data-testid={`button-edit-doctor-${doc.id}`}
+                            onClick={() => { setEditingDoctor(doc); setDoctorModalOpen(true); }}
+                            className="rounded-lg border border-[#dce8e8] px-3 py-1.5 text-xs font-semibold text-[#52737c] hover:bg-[#f5f9f9]"
+                          >
+                            Edit
+                          </button>
+                          <button
+                            data-testid={`button-toggle-doctor-${doc.id}`}
+                            disabled={updateUserMutation.isPending}
+                            onClick={() => handleToggleDoctorStatus(doc)}
+                            className="rounded-lg border border-[#dce8e8] px-3 py-1.5 text-xs font-semibold text-[#52737c] hover:bg-[#f5f9f9]"
+                          >
+                            {doc.active ? 'Deactivate' : 'Activate'}
+                          </button>
+                          <button
+                            data-testid={`button-delete-doctor-${doc.id}`}
+                            disabled={deleteUserMutation.isPending}
+                            onClick={() => handleDeleteDoctor(doc)}
+                            className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+                          >
+                            Delete
+                          </button>
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </Card>
+          )}
+
+          {/* TAB 2: PATIENTS CRUD */}
+          {activeTab === 'patients' && (
+            <Card className="mt-5">
+              <div className="flex flex-col gap-4 border-b border-[#eaf0f0] p-5 sm:flex-row sm:items-center sm:justify-between sm:px-6">
+                <div>
+                  <h2 className="text-lg font-bold text-[#254954]">Patients Directory &amp; Accounts</h2>
+                  <p className="mt-1 text-xs text-[#81969b]">Create, edit, toggle, or delete patient profiles and provision their mobile logins.</p>
+                </div>
+                <div className="flex flex-wrap items-center gap-2">
+                  <label className="flex h-10 items-center gap-2 rounded-xl border border-[#dce8e8] bg-[#fbfdfd] px-3 sm:w-64">
+                    <Search size={15} className="text-[#81969b]" />
+                    <input
+                      data-testid="input-search-admin-patients"
+                      value={patientSearch}
+                      onChange={(e) => setPatientSearch(e.target.value)}
+                      placeholder="Search patients or conditions…"
+                      className="w-full bg-transparent text-sm outline-none placeholder:text-[#a3b3b6]"
+                    />
+                  </label>
+                  <button
+                    data-testid="button-crud-add-patient"
+                    onClick={() => { setEditingPatient(null); setPatientModalOpen(true); }}
+                    className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#17647a] px-3.5 text-xs font-semibold text-white hover:bg-[#125366]"
+                  >
+                    <Plus size={15} /> Add patient
+                  </button>
+                  <button
+                    data-testid="button-crud-add-patient-account"
+                    onClick={() => { setAccountTargetPatient(null); setAccountModalOpen(true); }}
+                    className="inline-flex h-10 items-center gap-2 rounded-xl border border-[#c8e2df] bg-white px-3.5 text-xs font-semibold text-[#247b79] hover:bg-[#eef9f6]"
+                  >
+                    <KeyRound size={15} /> Add login
+                  </button>
+                </div>
+              </div>
+
+              {/* Filter Pills */}
+              <div className="flex flex-wrap gap-2 border-b border-[#edf2f2] px-5 py-3 sm:px-6">
+                {[
+                  { id: 'all', label: `All (${patients.length})` },
+                  { id: 'active', label: `Active (${activePatients.length})` },
+                  { id: 'inactive', label: `Inactive (${patients.length - activePatients.length})` },
+                  { id: 'no-account', label: `Needs Login (${patientsWithoutAccount.length})` },
+                  { id: 'has-account', label: `Login Active (${patientsWithAccount.length})` },
+                ].map((item) => (
+                  <button
+                    key={item.id}
+                    data-testid={`filter-patient-${item.id}`}
+                    onClick={() => setPatientFilter(item.id as typeof patientFilter)}
+                    className={`rounded-full border px-3 py-1 text-xs font-semibold transition ${
+                      patientFilter === item.id
+                        ? 'border-[#17647a] bg-[#17647a] text-white'
+                        : 'border-[#dce8e8] bg-white text-[#55737a] hover:bg-[#f6f9f9]'
+                    }`}
+                  >
+                    {item.label}
+                  </button>
+                ))}
+              </div>
+
+              {/* Patients List */}
+              {filteredPatients.length === 0 ? (
+                <EmptyState
+                  title={patientSearch ? 'No patients match your search' : 'No patients found'}
+                  body={patientSearch ? 'Try a different search keyword.' : 'Click "Add patient" above to create the first patient profile.'}
+                  icon={Users}
+                />
+              ) : (
+                <div className="divide-y divide-[#edf2f2]">
+                  {filteredPatients.map((pat) => (
+                    <div
+                      key={pat.id}
+                      data-testid={`row-admin-patient-${pat.id}`}
+                      className="flex flex-col gap-3 p-5 transition hover:bg-[#fbfdfd] sm:flex-row sm:items-center sm:justify-between sm:px-6"
+                    >
+                      <div className="flex items-start gap-3 min-w-0 flex-1">
+                        <Avatar name={pat.name} />
+                        <div className="min-w-0 flex-1">
+                          <div className="flex flex-wrap items-center gap-2">
+                            <Link
+                              href={`/patients/${pat.id}`}
+                              data-testid={`link-admin-patient-${pat.id}`}
+                              className="truncate text-sm font-bold text-[#31535e] hover:text-[#17647a] hover:underline"
+                            >
+                              {pat.name}
+                            </Link>
+                            <StatusPill status={pat.active ? 'active' : 'inactive'} />
+                            {pat.userId ? (
+                              <span className="inline-flex items-center gap-1 rounded-full bg-[#e5f5ee] px-2 py-0.5 text-[11px] font-semibold text-[#28745a]">
+                                <KeyRound size={11} /> Login Active ({pat.email})
+                              </span>
+                            ) : (
+                              <button
+                                data-testid={`button-create-account-admin-${pat.id}`}
+                                onClick={() => { setAccountTargetPatient(pat); setAccountModalOpen(true); }}
+                                className="inline-flex items-center gap-1 rounded-full bg-[#fbf1df] px-2.5 py-0.5 text-[11px] font-bold text-[#99702f] hover:bg-[#f4e6ca]"
+                              >
+                                <KeyRound size={11} /> + Create login
+                              </button>
+                            )}
+                          </div>
+                          <div className="mt-1 flex flex-wrap items-center gap-x-3 gap-y-1 text-xs text-[#81969b]">
+                            <span>{pat.age} yrs · {pat.sex.replace('_', ' ')}</span>
+                            {pat.phone && <span>· {pat.phone}</span>}
+                            <span>· Doctor: <b className="text-[#456872]">{pat.assignedProviderName || 'Unassigned'}</b></span>
+                          </div>
+                          <div className="mt-1.5 text-xs text-[#738d94]">
+                            {pat.conditions?.length ? pat.conditions.join(' · ') : 'No conditions listed'}
+                          </div>
+                        </div>
+                      </div>
+
+                      {/* Actions */}
+                      <div className="flex flex-wrap items-center gap-2 sm:justify-end">
+                        <Link
+                          href={`/patients/${pat.id}`}
+                          className="rounded-lg border border-[#dce8e8] px-3 py-1.5 text-xs font-semibold text-[#287d80] hover:bg-[#eef8f6]"
+                        >
+                          View
+                        </Link>
+                        <button
+                          data-testid={`button-edit-patient-admin-${pat.id}`}
+                          onClick={() => { setEditingPatient(pat); setPatientModalOpen(true); }}
+                          className="rounded-lg border border-[#dce8e8] px-3 py-1.5 text-xs font-semibold text-[#52737c] hover:bg-[#f5f9f9]"
+                        >
+                          Edit
+                        </button>
+                        <button
+                          data-testid={`button-toggle-patient-admin-${pat.id}`}
+                          disabled={updatePatientMutation.isPending}
+                          onClick={() => handleTogglePatientStatus(pat)}
+                          className="rounded-lg border border-[#dce8e8] px-3 py-1.5 text-xs font-semibold text-[#52737c] hover:bg-[#f5f9f9]"
+                        >
+                          {pat.active ? 'Deactivate' : 'Activate'}
+                        </button>
+                        <button
+                          data-testid={`button-delete-patient-admin-${pat.id}`}
+                          disabled={deletePatientMutation.isPending}
+                          onClick={() => handleDeletePatient(pat)}
+                          className="rounded-lg border border-red-200 px-3 py-1.5 text-xs font-semibold text-red-600 hover:bg-red-50"
+                        >
+                          Delete
+                        </button>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </Card>
+          )}
+
+          {/* TAB 3: OVERVIEW & DOSES */}
+          {activeTab === 'overview' && (
+            <div className="mt-5 space-y-6">
+              <div className="flex flex-wrap items-center justify-between gap-3 rounded-2xl border border-[#cfe7df] bg-[#eef8f4] p-4 text-sm text-[#37796b]">
+                <div>
+                  <div className="font-bold text-[#23584e]">Adherence Simulation Tools</div>
+                  <div className="text-xs text-[#52877c]">Simulate due doses or fast-forward 2 hours to test alerts and notifications.</div>
+                </div>
+                <div className="flex flex-wrap gap-2">
+                  <button
+                    data-testid="button-demo-dose"
+                    onClick={addDemo}
+                    disabled={createDemo.isPending || activePatients.length === 0}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg border border-[#c8e2df] bg-white px-3 text-xs font-semibold text-[#247b79] hover:bg-[#f2faf7] disabled:opacity-50"
+                  >
+                    <Plus size={14} /> Mark a dose due now
+                  </button>
+                  <button
+                    data-testid="button-simulate-time"
+                    onClick={simulateNow}
+                    disabled={simulate.isPending}
+                    className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#17647a] px-3 text-xs font-semibold text-white hover:bg-[#125366] disabled:opacity-50"
+                  >
+                    <Clock3 size={14} /> Simulate 2 hours
+                  </button>
+                </div>
+              </div>
+
+              <div className="grid gap-5 xl:grid-cols-[1.35fr_.85fr]">
+                <Card>
+                  <div className="flex items-center justify-between border-b border-[#eaf0f0] px-5 py-4 sm:px-6">
+                    <div>
+                      <h2 className="font-bold text-[#254954]">Today’s scheduled doses</h2>
+                      <p className="mt-1 text-xs text-[#80969c]">All patient doses scheduled across the clinic today</p>
+                    </div>
+                    <Link href="/today" className="flex items-center gap-1 text-xs font-semibold text-[#287f83] hover:underline">
+                      View all <ArrowRight size={14} />
+                    </Link>
+                  </div>
+                  {doses.length === 0 ? (
+                    <EmptyState title="No doses today" body="There are no scheduled doses for today across any patients." />
+                  ) : (
+                    <div className="divide-y divide-[#edf2f2]">
+                      {doses.slice(0, 6).map((d) => (
+                        <DoseRow
+                          key={d.id}
+                          dose={d}
+                          patientName={patients.find((p) => p.id === d.patientId)?.name}
+                          compact
+                          readOnly
+                          role={user.role}
+                        />
+                      ))}
+                    </div>
+                  )}
+                </Card>
+
+                <Card>
+                  <div className="flex items-center justify-between border-b border-[#eaf0f0] px-5 py-4 sm:px-6">
+                    <div>
+                      <h2 className="font-bold text-[#254954]">Recent Patients</h2>
+                      <p className="mt-1 text-xs text-[#80969c]">Active care profiles</p>
+                    </div>
+                    <Link href="/patients" className="grid h-8 w-8 place-items-center rounded-lg text-[#60818b] hover:bg-[#f1f7f7]">
+                      <ArrowRight size={16} />
+                    </Link>
+                  </div>
+                  {activePatients.length === 0 ? (
+                    <EmptyState title="No active patients" body="Create a patient profile to get started." icon={Users} />
+                  ) : (
+                    <div className="divide-y divide-[#edf2f2]">
+                      {activePatients.slice(0, 5).map((p) => (
+                        <Link
+                          href={`/patients/${p.id}`}
+                          key={p.id}
+                          className="flex items-center gap-3 px-5 py-4 transition hover:bg-[#f8fbfb] sm:px-6"
+                        >
+                          <Avatar name={p.name} small />
+                          <div className="min-w-0 flex-1">
+                            <div className="truncate text-sm font-semibold text-[#31535e]">{p.name}</div>
+                            <div className="mt-1 truncate text-xs text-[#81969b]">
+                              {p.age} yrs · Dr. {p.assignedProviderName || 'Unassigned'}
+                            </div>
+                          </div>
+                          <ArrowRight size={15} className="text-[#9aafb2]" />
+                        </Link>
+                      ))}
+                    </div>
+                  )}
+                </Card>
+              </div>
+            </div>
+          )}
+        </>
+      )}
+
+      {/* MODALS */}
+      {doctorModalOpen && (
+        <UserModal
+          user={editingDoctor}
+          defaultRole="provider"
+          lockRole={true}
+          title={editingDoctor ? 'Edit Doctor' : 'Add Doctor'}
+          onClose={() => setDoctorModalOpen(false)}
+        />
+      )}
+
+      {patientModalOpen && (
+        <PatientModal
+          patient={editingPatient}
+          onClose={() => setPatientModalOpen(false)}
+        />
+      )}
+
+      {accountModalOpen && (
+        <CreatePatientAccountModal
+          initialPatient={accountTargetPatient}
+          user={user}
+          onClose={() => setAccountModalOpen(false)}
+        />
+      )}
+    </div>
+  );
+}
+
 function Dashboard({user}:{user:AuthUser}){
+  if (user.role === 'admin') {
+    return <AdminDashboard user={user} />;
+  }
   const patients=useListPatients(), doses=useListDoses({date:dateToday()}), meds=useListMedications(), createDemo=useCreateDemoDose(), simulate=useSimulateOverdueDoses();
   const qc=useQueryClient(),[demoFeedback,setDemoFeedback]=useState('');
+  const [patientModalOpen, setPatientModalOpen]=useState(false);
+  const [accountModalOpen, setAccountModalOpen]=useState(false);
+  const [accountTargetPatient, setAccountTargetPatient]=useState<Patient|null>(null);
   const doseList=doses.data||[], patientList=(patients.data||[]).filter(p=>p.active);
   const completed=doseList.filter(d=>d.status==='taken').length, total=doseList.length, percent=total?Math.round(completed/total*100):0;
-  const canDemo=user.role==='provider'||user.role==='admin';
+  const canDemo=user.role==='provider';
   const refreshDemo=()=>{qc.invalidateQueries({queryKey:getListDosesQueryKey()});qc.invalidateQueries({queryKey:getListNotificationsQueryKey()});qc.invalidateQueries({queryKey:getGetAnalyticsQueryKey()})};
   // The linked demo patient (Alex Morgan) makes reminders visible on the patient and caregiver accounts.
   const addDemo=()=>{const p=patientList.find(x=>x.userId)||patientList[0],m=(meds.data||[]).find(x=>x.patientId===p?.id&&x.active);if(!p||!m){setDemoFeedback('Add an active medication to a patient first.');return}createDemo.mutate({data:{patientId:p.id,medicationId:m.id}},{onSuccess:()=>{refreshDemo();setDemoFeedback(`${m.name} for ${p.name} is now due. A reminder was sent to the patient and caregiver.`)},onError:()=>setDemoFeedback('Could not create a demo dose.')})};
   const simulateNow=()=>simulate.mutate(undefined,{onSuccess:r=>{refreshDemo();setDemoFeedback(r.missedCount?`Simulated 2 hours passing: ${r.missedCount} overdue dose${r.missedCount===1?' was':'s were'} marked missed and alerts were sent.`:'No doses are currently due. Add a demo dose first, then simulate time.')},onError:()=>setDemoFeedback('Could not run the simulation.')});
   const loading=patients.isLoading||doses.isLoading;
   return <div className="page-enter">
-    <PageHeading eyebrow="Your care at a glance" title={`Good ${new Date().getHours()<12?'morning':new Date().getHours()<18?'afternoon':'evening'}, ${shortName(user.name)}`} description="Here’s how today is taking shape across your care team." action={canDemo?<div className="flex flex-wrap gap-2"><button data-testid="button-demo-dose" title="Creates a dose that is due right now" onClick={addDemo} disabled={createDemo.isPending||patientList.length===0} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#c8e2df] bg-white px-4 text-sm font-semibold text-[#247b79] transition hover:bg-[#eef9f6] disabled:opacity-50"><Plus size={16}/>{createDemo.isPending?'Adding dose…':'Mark a dose due now'}</button><button data-testid="button-simulate-time" title="Moves due doses past the 2-hour grace period" onClick={simulateNow} disabled={simulate.isPending} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#17647a] px-4 text-sm font-semibold text-white transition hover:bg-[#125366] disabled:opacity-50"><Clock3 size={16}/>{simulate.isPending?'Simulating…':'Simulate 2 hours'}</button></div>:undefined}/>
+    <PageHeading eyebrow="Your care at a glance" title={`Good ${new Date().getHours()<12?'morning':new Date().getHours()<18?'afternoon':'evening'}, ${shortName(user.name)}`} description="Here’s how today is taking shape across your care team." action={<div className="flex flex-wrap gap-2">
+      {user.role==='provider'&&<button data-testid="button-doctor-add-patient" onClick={()=>setPatientModalOpen(true)} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#c8e2df] bg-white px-4 text-sm font-semibold text-[#247b79] transition hover:bg-[#eef9f6]"><Plus size={16}/> Add patient</button>}
+      {user.role==='provider'&&<button data-testid="button-doctor-add-account" onClick={()=>{setAccountTargetPatient(null);setAccountModalOpen(true)}} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl bg-[#17647a] px-4 text-sm font-semibold text-white transition hover:bg-[#125366]"><KeyRound size={16}/> Add patient account</button>}
+      {canDemo&&<button data-testid="button-demo-dose" title="Creates a dose that is due right now" onClick={addDemo} disabled={createDemo.isPending||patientList.length===0} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#c8e2df] bg-white px-4 text-sm font-semibold text-[#247b79] transition hover:bg-[#eef9f6] disabled:opacity-50"><Plus size={16}/>{createDemo.isPending?'Adding dose…':'Mark a dose due now'}</button>}
+      {canDemo&&<button data-testid="button-simulate-time" title="Moves due doses past the 2-hour grace period" onClick={simulateNow} disabled={simulate.isPending} className="inline-flex h-10 items-center justify-center gap-2 rounded-xl border border-[#c8e2df] bg-white px-4 text-sm font-semibold text-[#247b79] transition hover:bg-[#eef9f6] disabled:opacity-50"><Clock3 size={16}/>{simulate.isPending?'Simulating…':'Simulate 2 hours'}</button>}
+    </div>}/>
     <CoverageBanner user={user}/>
     {demoFeedback&&<div data-testid="status-demo-feedback" role="status" className="mb-5 flex items-start justify-between gap-3 rounded-xl border border-[#cfe7df] bg-[#eef8f4] px-4 py-3 text-sm text-[#37796b]"><span>{demoFeedback}</span><button aria-label="Dismiss" onClick={()=>setDemoFeedback('')} className="text-[#5d8f86]"><X size={15}/></button></div>}
     {loading?<SkeletonGrid/>:patients.isError||doses.isError?<ErrorState retry={()=>{patients.refetch();doses.refetch()}}/>:<>
@@ -417,11 +1145,14 @@ function Dashboard({user}:{user:AuthUser}){
            {doseList.length===0?<EmptyState title="A clear start to the day" body="There are no doses scheduled for today yet. Active medication schedules will appear here."/>:<div className="divide-y divide-[#edf2f2]">{doseList.slice(0,6).map(d=><DoseRow key={d.id} dose={d} patientName={patientList.find(p=>p.id===d.patientId)?.name} compact readOnly={user.role!=='patient'} role={user.role}/>)}</div>}
         </Card>
         <Card><div className="flex items-center justify-between border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><div><h2 className="font-bold text-[#254954]">Assigned patients</h2><p className="mt-1 text-xs text-[#80969c]">Your active care relationships</p></div><Link href="/patients" data-testid="link-view-patients" className="grid h-8 w-8 place-items-center rounded-lg text-[#60818b] hover:bg-[#f1f7f7]"><ArrowRight size={16}/></Link></div>
-          {!patientList.length?<EmptyState title="No patients assigned yet" body="New patient profiles assigned to your care will appear here." icon={Users}/>:<div className="divide-y divide-[#edf2f2]">{patientList.slice(0,5).map(p=><Link href={`/patients/${p.id}`} key={p.id} data-testid={`row-dashboard-patient-${p.id}`} className="flex items-center gap-3 px-5 py-4 transition hover:bg-[#f8fbfb] sm:px-6"><Avatar name={p.name} small/><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-[#31535e]">{p.name}</div><div className="mt-1 truncate text-xs text-[#81969b]">{p.age} years · {p.conditions?.[0]||'Care plan in progress'}</div></div><ArrowRight size={15} className="text-[#9aafb2]"/></Link>)}</div>}
+          {!patientList.length?<EmptyState title="No patients assigned yet" body="New patient profiles assigned to your care will appear here." icon={Users}/>:<div className="divide-y divide-[#edf2f2]">{patientList.slice(0,6).map(p=><div key={p.id} data-testid={`row-dashboard-patient-${p.id}`} className="flex items-center justify-between gap-3 px-5 py-3.5 transition hover:bg-[#f8fbfb] sm:px-6"><Link href={`/patients/${p.id}`} className="flex min-w-0 flex-1 items-center gap-3"><Avatar name={p.name} small/><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-[#31535e] hover:text-[#17647a]">{p.name}</div><div className="mt-0.5 truncate text-xs text-[#81969b]">{p.age} years · {p.conditions?.[0]||'Care plan in progress'}</div></div></Link><div className="flex items-center gap-2">{p.userId?<span className="hidden sm:inline-flex items-center gap-1 rounded-full bg-[#e5f5ee] px-2 py-0.5 text-[10px] font-semibold text-[#28745a]"><KeyRound size={10}/> Account active</span>:user.role==='provider'?<button data-testid={`button-doctor-create-account-${p.id}`} onClick={(e)=>{e.preventDefault();setAccountTargetPatient(p);setAccountModalOpen(true)}} className="inline-flex items-center gap-1 rounded-lg bg-[#e8f3f5] px-2.5 py-1 text-xs font-semibold text-[#17647a] hover:bg-[#d8eef3]"><UserPlus size={12}/> Add login</button>:null}<Link href={`/patients/${p.id}`} className="text-[#9aafb2] hover:text-[#17647a]"><ArrowRight size={15}/></Link></div></div>)}</div>}
+          {user.role==='provider'&&patientList.some(p=>!p.userId)&&<div className="flex items-center justify-between border-t border-[#edf2f2] bg-[#fcfdfd] px-5 py-3 text-xs sm:px-6"><span className="text-[#648087]">Some patients don’t have a sign-in yet.</span><button data-testid="button-prompt-add-patient-account" onClick={()=>{setAccountTargetPatient(null);setAccountModalOpen(true)}} className="font-semibold text-[#17647a] hover:underline flex items-center gap-1"><KeyRound size={12}/> Create login</button></div>}
         </Card>
       </div>
       <div className="mt-5 flex items-start gap-3 rounded-2xl border border-[#d9eae8] bg-[#eaf6f3] px-5 py-4"><div className="mt-0.5 text-[#388b81]"><HeartPulse size={18}/></div><div><p className="text-sm font-semibold text-[#315f60]">A gentle reminder</p><p className="mt-1 text-xs leading-5 text-[#698b89]">Medication tracking is here to support a conversation—not replace one. Reach out to your care team with questions.</p></div></div>
     </>}
+    {patientModalOpen&&<PatientModal patient={null} onClose={()=>setPatientModalOpen(false)}/>}
+    {accountModalOpen&&<CreatePatientAccountModal initialPatient={accountTargetPatient} user={user} onClose={()=>setAccountModalOpen(false)}/>}
   </div>
 }
 function Metric({label,value,detail,icon:Icon,accent,progress}:{label:string;value:string;detail:string;icon:typeof Activity;accent:string;progress?:number}){const color=accent==='teal'?'bg-[#e4f4f0] text-[#25867c]':accent==='blue'?'bg-[#e7f0f6] text-[#3c7790]':'bg-[#fbf1df] text-[#a77b36]';return <Card className="relative overflow-hidden p-5 sm:p-6"><div className="flex items-start justify-between"><div><p className="text-xs font-semibold text-[#789098]">{label}</p><p className="mt-3 text-[32px] font-extrabold leading-none tracking-[-.05em] text-[#214754]" data-testid={`metric-${label.toLowerCase().replaceAll(' ','-')}`}>{value}</p><p className="mt-2 text-xs text-[#879ba0]">{detail}</p></div><div className={`grid h-10 w-10 place-items-center rounded-xl ${color}`}><Icon size={19}/></div></div>{progress!==undefined&&<div className="mt-4 h-1.5 overflow-hidden rounded-full bg-[#edf3f2]"><div className="h-full rounded-full bg-[#46b5a0] transition-all" style={{width:`${progress}%`}}/></div>}</Card>}
@@ -881,25 +1612,72 @@ function CoveragePage({user}:{user:AuthUser}){
   const doctors=providers.data||[];
   return <div className="page-enter"><PageHeading eyebrow="Care continuity" title="Doctor coverage" description="When a doctor is absent, another doctor temporarily handles their patients, alerts and messages. Nothing is lost. Patients return automatically when the coverage ends."/>
     <div className="grid gap-5 xl:grid-cols-[.9fr_1.1fr]">
-      <Card className="p-5 sm:p-6"><div className="flex items-start gap-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e8f4f0] text-[#388b7f]"><ArrowLeftRight size={18}/></div><div><h2 className="font-bold text-[#254954]">{isAdmin?'Arrange coverage':'I will be absent'}</h2><p className="mt-1 text-xs leading-5 text-[#81969b]">{isAdmin?'Choose who is away and who will handle their patients.':'Choose a colleague to look after your patients while you’re away.'}</p></div></div>
-        <form onSubmit={submit} className="mt-5 space-y-3">
-          <div className="grid gap-3 sm:grid-cols-2">
-            <label className="text-[11px] font-semibold text-[#6c858b]">Absent doctor<select data-testid="select-absent-doctor" required value={absent} onChange={e=>setAbsent(e.target.value)} disabled={!isAdmin} className={field}><option value="" disabled>Select doctor</option>{doctors.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
-            <label className="text-[11px] font-semibold text-[#6c858b]">Covering doctor<select data-testid="select-covering-doctor" required value={covering} onChange={e=>setCovering(e.target.value)} className={field}><option value="" disabled>Select doctor</option>{doctors.filter(d=>String(d.id)!==absent).map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
-            <label className="text-[11px] font-semibold text-[#6c858b]">From<input data-testid="input-coverage-start" type="date" min={dateToday()} required value={start} onChange={e=>{if(e.target.value>=dateToday())setStart(e.target.value)}} className={field}/></label>
-            <label className="text-[11px] font-semibold text-[#6c858b]">Until (leave blank if unknown)<input data-testid="input-coverage-end" type="date" min={start} value={end} onChange={e=>setEnd(e.target.value)} className={field}/></label>
-          </div>
-          <label className="block text-[11px] font-semibold text-[#6c858b]">Reason (optional)<input data-testid="input-coverage-reason" value={reason} maxLength={200} onChange={e=>setReason(e.target.value)} placeholder="e.g. Sick leave, conference" className={field}/></label>
-          <button data-testid="button-create-coverage" disabled={create.isPending||!absent||!covering} className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#17647a] px-4 text-sm font-semibold text-white hover:bg-[#125366] disabled:opacity-50"><ArrowLeftRight size={15}/>{create.isPending?'Saving…':'Hand over patients'}</button>
-          {feedback&&<div role="status" data-testid="status-coverage-feedback" className={`rounded-xl border p-3 text-xs ${feedback.ok?'border-[#cfe7df] bg-[#eef8f4] text-[#37796b]':'border-red-200 bg-red-50 text-red-800'}`}>{feedback.text}</div>}
-        </form>
-        <p className="mt-4 text-[11px] leading-5 text-[#91a4a8]">To move a patient to another doctor permanently, open the patient’s profile, choose <b>Edit profile</b>, and change <b>Assigned doctor</b>.</p>
-      </Card>
+      <div className="space-y-5">
+        <Card className="p-5 sm:p-6"><div className="flex items-start gap-3"><div className="grid h-10 w-10 shrink-0 place-items-center rounded-xl bg-[#e8f4f0] text-[#388b7f]"><ArrowLeftRight size={18}/></div><div><h2 className="font-bold text-[#254954]">{isAdmin?'Arrange coverage':'I will be absent'}</h2><p className="mt-1 text-xs leading-5 text-[#81969b]">{isAdmin?'Choose who is away and who will handle their patients.':'Choose a colleague to look after your patients while you’re away.'}</p></div></div>
+          <form onSubmit={submit} className="mt-5 space-y-3">
+            <div className="grid gap-3 sm:grid-cols-2">
+              <label className="text-[11px] font-semibold text-[#6c858b]">Absent doctor<select data-testid="select-absent-doctor" required value={absent} onChange={e=>setAbsent(e.target.value)} disabled={!isAdmin} className={field}><option value="" disabled>Select doctor</option>{doctors.map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
+              <label className="text-[11px] font-semibold text-[#6c858b]">Covering doctor<select data-testid="select-covering-doctor" required value={covering} onChange={e=>setCovering(e.target.value)} className={field}><option value="" disabled>Select doctor</option>{doctors.filter(d=>String(d.id)!==absent).map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
+              <label className="text-[11px] font-semibold text-[#6c858b]">From<input data-testid="input-coverage-start" type="date" min={dateToday()} required value={start} onChange={e=>{if(e.target.value>=dateToday())setStart(e.target.value)}} className={field}/></label>
+              <label className="text-[11px] font-semibold text-[#6c858b]">Until (leave blank if unknown)<input data-testid="input-coverage-end" type="date" min={start} value={end} onChange={e=>setEnd(e.target.value)} className={field}/></label>
+            </div>
+            <label className="block text-[11px] font-semibold text-[#6c858b]">Reason (optional)<input data-testid="input-coverage-reason" value={reason} maxLength={200} onChange={e=>setReason(e.target.value)} placeholder="e.g. Sick leave, conference" className={field}/></label>
+            <button data-testid="button-create-coverage" disabled={create.isPending||!absent||!covering} className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#17647a] px-4 text-sm font-semibold text-white hover:bg-[#125366] disabled:opacity-50"><ArrowLeftRight size={15}/>{create.isPending?'Saving…':'Hand over patients'}</button>
+            {feedback&&<div role="status" data-testid="status-coverage-feedback" className={`rounded-xl border p-3 text-xs ${feedback.ok?'border-[#cfe7df] bg-[#eef8f4] text-[#37796b]':'border-red-200 bg-red-50 text-red-800'}`}>{feedback.text}</div>}
+          </form>
+        </Card>
+        {user.role==='provider'&&<PatientTransferPanel user={user} doctors={doctors}/>}
+      </div>
       <Card><div className="border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><h2 className="font-bold text-[#254954]">Coverage schedule</h2><p className="mt-1 text-xs text-[#81969b]">Current, upcoming and past handovers</p></div>
         {coverage.isLoading?<ListSkeleton/>:coverage.isError?<ErrorState retry={()=>coverage.refetch()}/>:list.length===0?<EmptyState title="No coverage arranged" body="Handovers you create will appear here." icon={ArrowLeftRight}/>:<div className="divide-y divide-[#edf2f2]">{list.map(c=><CoverageRow key={c.id} coverage={c} onChange={refresh}/>)}</div>}
       </Card>
     </div>
   </div>;
+}
+type PatientTransferRequest={
+  id:number;patientId:number;patientName:string;fromProviderId:number;fromProviderName:string;
+  toProviderId:number;toProviderName:string;reason:string|null;status:'pending'|'accepted'|'declined';
+  createdAt:string;respondedAt:string|null;
+};
+function PatientTransferPanel({user,doctors}:{user:AuthUser;doctors:{id:number;name:string;email:string}[]}){
+  const requests=useQuery({queryKey:['coverage-transfers'],queryFn:()=>customFetch<PatientTransferRequest[]>('/api/coverage/transfers')});
+  const patients=useListPatients(),qc=useQueryClient();
+  const [patientId,setPatientId]=useState(''),[toProviderId,setToProviderId]=useState(''),[reason,setReason]=useState('');
+  const [feedback,setFeedback]=useState<{ok:boolean;text:string}|null>(null);
+  const field='mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal text-[#355661]';
+  const refresh=()=>{void qc.invalidateQueries({queryKey:['coverage-transfers']});void qc.invalidateQueries({queryKey:getListPatientsQueryKey()});void qc.invalidateQueries({queryKey:getListNotificationsQueryKey()})};
+  const create=useMutation({
+    mutationFn:(input:{patientId:number;toProviderId:number;reason:string|null})=>customFetch<PatientTransferRequest>('/api/coverage/transfers',{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify(input)}),
+    onSuccess:()=>{refresh();setPatientId('');setToProviderId('');setReason('');setFeedback({ok:true,text:'Transfer request sent. The receiving doctor has been notified and must accept before the assignment changes.'})},
+    onError:error=>setFeedback({ok:false,text:apiError(error,'Could not send this transfer request.')}),
+  });
+  const respond=useMutation({
+    mutationFn:(input:{id:number;decision:'accept'|'decline'})=>customFetch<PatientTransferRequest>(`/api/coverage/transfers/${input.id}/respond`,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({decision:input.decision})}),
+    onSuccess:(_request,input)=>{refresh();setFeedback({ok:true,text:input.decision==='accept'?'Transfer accepted. The patient is now assigned to you.':'Transfer declined. The patient remains with the requesting doctor.'})},
+    onError:error=>setFeedback({ok:false,text:apiError(error,'Could not respond to this transfer request.')}),
+  });
+  const eligiblePatients=(patients.data||[]).filter(p=>p.assignedProviderId===user.id);
+  const visibleRequests=requests.data||[];
+  return <Card className="overflow-hidden">
+    <div className="border-b border-[#eaf0f0] px-5 py-4 sm:px-6"><h2 className="font-bold text-[#254954]">Permanent patient transfers</h2><p className="mt-1 text-xs leading-5 text-[#81969b]">Request a transfer to another doctor. Their assignment changes only after they accept.</p></div>
+    <form onSubmit={e=>{e.preventDefault();setFeedback(null);create.mutate({patientId:Number(patientId),toProviderId:Number(toProviderId),reason:reason.trim()||null})}} className="space-y-3 border-b border-[#eaf0f0] p-5 sm:px-6">
+      <label className="block text-[11px] font-semibold text-[#6c858b]">Patient<select data-testid="select-transfer-patient" required value={patientId} onChange={e=>setPatientId(e.target.value)} className={field}><option value="">Select a patient</option>{eligiblePatients.map(p=><option key={p.id} value={p.id}>{p.name}</option>)}</select></label>
+      <label className="block text-[11px] font-semibold text-[#6c858b]">Receiving doctor<select data-testid="select-transfer-doctor" required value={toProviderId} onChange={e=>setToProviderId(e.target.value)} className={field}><option value="">Select a doctor</option>{doctors.filter(d=>d.id!==user.id).map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select></label>
+      <label className="block text-[11px] font-semibold text-[#6c858b]">Reason (optional)<input data-testid="input-transfer-reason" maxLength={200} value={reason} onChange={e=>setReason(e.target.value)} placeholder="Add context for the receiving doctor" className={field}/></label>
+      <button data-testid="button-request-transfer" disabled={create.isPending||!patientId||!toProviderId} className="inline-flex h-10 items-center gap-2 rounded-xl bg-[#17647a] px-4 text-sm font-semibold text-white hover:bg-[#125366] disabled:opacity-50"><Send size={15}/>{create.isPending?'Sending…':'Request transfer'}</button>
+      {feedback&&<div role="status" data-testid="status-transfer-feedback" className={`rounded-xl border p-3 text-xs ${feedback.ok?'border-[#cfe7df] bg-[#eef8f4] text-[#37796b]':'border-red-200 bg-red-50 text-red-800'}`}>{feedback.text}</div>}
+    </form>
+    <div className="border-b border-[#eaf0f0] px-5 py-3 sm:px-6"><h3 className="text-sm font-bold text-[#31535e]">Transfer requests</h3></div>
+    {requests.isLoading?<div className="p-5"><ListSkeleton/></div>:requests.isError?<ErrorState retry={()=>requests.refetch()}/>:visibleRequests.length===0?<EmptyState title="No transfer requests" body="Requests you send or receive will appear here." icon={ArrowLeftRight}/>:<div className="divide-y divide-[#edf2f2]">{visibleRequests.map(request=>{
+      const incoming=request.toProviderId===user.id;
+      const statusStyle=request.status==='pending'?'bg-[#fff3dd] text-[#946b26]':request.status==='accepted'?'bg-[#e6f4ed] text-[#34785d]':'bg-[#f2f3f3] text-[#778589]';
+      return <div key={request.id} data-testid={`row-transfer-${request.id}`} className="space-y-3 px-5 py-4 sm:px-6">
+        <div className="flex flex-wrap items-center gap-2"><span className="font-semibold text-sm text-[#31535e]">{request.patientName}</span><span className={`rounded-full px-2 py-0.5 text-[10px] font-bold uppercase ${statusStyle}`}>{request.status}</span></div>
+        <p className="text-xs leading-5 text-[#81969b]">{incoming?`${request.fromProviderName} requested transfer to you`:`Transfer requested for ${request.toProviderName}`}{request.reason?` · ${request.reason}`:''}</p>
+        {incoming&&request.status==='pending'&&<div className="flex gap-2"><button data-testid={`button-accept-transfer-${request.id}`} disabled={respond.isPending} onClick={()=>respond.mutate({id:request.id,decision:'accept'})} className="inline-flex h-9 items-center gap-1.5 rounded-lg bg-[#28745a] px-3 text-xs font-semibold text-white disabled:opacity-50"><Check size={14}/>Accept</button><button data-testid={`button-decline-transfer-${request.id}`} disabled={respond.isPending} onClick={()=>respond.mutate({id:request.id,decision:'decline'})} className="h-9 rounded-lg border border-[#dce8e8] px-3 text-xs font-semibold text-[#587780] disabled:opacity-50">Decline</button></div>}
+      </div>;
+    })}</div>}
+  </Card>;
 }
 function CoverageRow({coverage:c,onChange}:{coverage:Coverage;onChange:()=>void}){
   const end=useEndCoverage();
@@ -912,6 +1690,202 @@ function CoverageBanner({user}:{user:AuthUser}){
   const active=(coverage.data||[]).filter(c=>c.status==='active');
   if(!active.length)return null;
   return <div className="mb-5 space-y-2">{active.map(c=><div key={c.id} data-testid={`banner-coverage-${c.id}`} className="flex items-start gap-3 rounded-2xl border border-[#cfe0ea] bg-[#eef5fa] px-4 py-3 text-sm text-[#2f5d72]"><ArrowLeftRight size={18} className="mt-0.5 shrink-0"/><div className="flex-1">{c.coveringProviderId===user.id?<><b>You’re covering for {c.absentProviderName}</b> until {c.endDate||'further notice'}. Their {c.patientCount} patients are in your list, marked “Covering”.</>:<><b>{c.coveringProviderName} is covering your patients</b> until {c.endDate||'further notice'}.</>}</div><Link href="/coverage" className="shrink-0 text-xs font-semibold underline">Manage</Link></div>)}</div>;
+}
+
+
+/** Standalone modal that allows doctors and admins to easily provision a patient login account. */
+function CreatePatientAccountModal({
+  initialPatient,
+  user,
+  onClose,
+}: {
+  initialPatient?: Patient | null;
+  user: AuthUser;
+  onClose: () => void;
+}) {
+  const patientsQuery = useListPatients();
+  const createAccount = useCreatePatientAccount();
+  const qc = useQueryClient();
+
+  const patients = patientsQuery.data || [];
+  const candidatePatients = user.role === 'admin'
+    ? patients
+    : patients.filter((p) => !p.assignedProviderId || p.assignedProviderId === user.id);
+
+  const [selectedPatientId, setSelectedPatientId] = useState<number>(
+    initialPatient?.id || candidatePatients.find((p) => !p.userId)?.id || candidatePatients[0]?.id || 0
+  );
+
+  const currentPatient = candidatePatients.find((p) => p.id === selectedPatientId) || initialPatient;
+
+  const [email, setEmail] = useState(currentPatient?.email || '');
+  const [phone, setPhone] = useState(currentPatient?.phone || '');
+  const [password, setPassword] = useState(generateTempPassword());
+  const [error, setError] = useState('');
+  const [created, setCreated] = useState<{ email: string; password: string; name: string } | null>(null);
+
+  const handleSelectPatient = (id: number) => {
+    setSelectedPatientId(id);
+    const p = candidatePatients.find((x) => x.id === id);
+    if (p) {
+      setEmail(p.email || '');
+      setPhone(p.phone || '');
+      setError('');
+    }
+  };
+
+  const submit = (e: FormEvent) => {
+    e.preventDefault();
+    if (!selectedPatientId) {
+      setError('Please select a patient.');
+      return;
+    }
+    setError('');
+    createAccount.mutate(
+      {
+        id: selectedPatientId,
+        data: { email: email.trim().toLowerCase(), password, phone: phone.trim() || null },
+      },
+      {
+        onSuccess: (r) => {
+          setCreated({ email: r.email, password, name: currentPatient?.name || 'Patient' });
+          qc.invalidateQueries({ queryKey: getListPatientsQueryKey() });
+          qc.invalidateQueries({ queryKey: getGetPatientQueryKey(selectedPatientId) });
+          qc.invalidateQueries({ queryKey: getListUsersQueryKey() });
+        },
+        onError: (err) => setError(apiError(err, 'Could not create the patient account.')),
+      }
+    );
+  };
+
+  if (created) {
+    return (
+      <Modal title="Patient login created" subtitle="Share these sign-in details with the patient." onClose={onClose}>
+        <div className="space-y-4" data-testid="panel-patient-account-created">
+          <div className="rounded-xl border border-[#cfe7df] bg-[#eef8f4] p-4 text-sm text-[#37796b]">
+            <div className="font-semibold">{created.name}</div>
+            <div className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+              <span className="text-[#5d8f86]">Email</span>
+              <span className="font-mono">{created.email}</span>
+              <span className="text-[#5d8f86]">Temporary password</span>
+              <span className="font-mono font-bold" data-testid="text-temp-password">{created.password}</span>
+            </div>
+          </div>
+          <p className="text-xs leading-5 text-[#71888e]">
+            The patient can sign into the CareTrack Android app with this email and temporary password. They will be prompted to set their permanent password and verify their phone number.
+          </p>
+          <div className="flex justify-end gap-2">
+            <button
+              type="button"
+              onClick={() => navigator.clipboard?.writeText(`CareTrack Login:\nEmail: ${created.email}\nTemporary password: ${created.password}`)}
+              className="h-10 rounded-lg border border-[#dce8e8] px-4 text-sm font-semibold text-[#52737c] hover:bg-[#f5f9f9]"
+            >
+              Copy details
+            </button>
+            <button
+              type="button"
+              data-testid="button-done-patient-account"
+              onClick={onClose}
+              className="h-10 rounded-lg bg-[#17647a] px-4 text-sm font-semibold text-white hover:bg-[#125366]"
+            >
+              Done
+            </button>
+          </div>
+        </div>
+      </Modal>
+    );
+  }
+
+  return (
+    <Modal
+      title={initialPatient ? `Create login for ${initialPatient.name}` : "Add patient account"}
+      subtitle="Give a patient their own mobile sign-in to log doses and message you."
+      onClose={onClose}
+    >
+      <form onSubmit={submit} className="space-y-4">
+        {!initialPatient && (
+          <label className="block text-xs font-semibold text-[#526f77]">
+            Select patient
+            <select
+              data-testid="select-patient-for-account"
+              value={selectedPatientId}
+              onChange={(e) => handleSelectPatient(Number(e.target.value))}
+              className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal text-[#31515c]"
+            >
+              {candidatePatients.map((p) => (
+                <option key={p.id} value={p.id}>
+                  {p.name} {p.userId ? '✓ (Already has login)' : '⚠ (Needs login)'}
+                </option>
+              ))}
+            </select>
+            {currentPatient?.userId && (
+              <span className="mt-1 block text-xs text-amber-600">
+                This patient already has an active account ({currentPatient.email}). You can reset their password in Team Access instead.
+              </span>
+            )}
+          </label>
+        )}
+
+        <label className="block text-xs font-semibold text-[#526f77]">
+          Patient email address (for login & verification)
+          <input
+            type="email"
+            required
+            value={email}
+            onChange={(e) => setEmail(e.target.value)}
+            placeholder="patient@gmail.com"
+            className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal text-[#31515c] outline-none focus:border-primary"
+            data-testid="input-patient-account-email"
+          />
+        </label>
+
+        <label className="block text-xs font-semibold text-[#526f77]">
+          Mobile number (for SMS login codes)
+          <input
+            type="tel"
+            value={phone}
+            onChange={(e) => setPhone(e.target.value)}
+            placeholder="09XXXXXXXXX"
+            className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal text-[#31515c] outline-none focus:border-primary"
+            data-testid="input-patient-account-phone"
+          />
+        </label>
+
+        <div>
+          <div className="flex items-center justify-between">
+            <span className="text-xs font-semibold text-[#526f77]">Temporary password</span>
+            <button
+              type="button"
+              data-testid="button-generate-patient-password"
+              onClick={() => setPassword(generateTempPassword())}
+              className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#287d80] hover:underline"
+            >
+              <KeyRound size={12} /> Generate new
+            </button>
+          </div>
+          <PasswordInput
+            testId="input-patient-account-password"
+            value={password}
+            onChange={setPassword}
+            required
+            minLength={8}
+            className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal outline-none focus:border-primary"
+          />
+          <p className="mt-1 text-[11px] text-[#8ba0a4]">
+            The patient will use this to sign in the first time and will choose their own password.
+          </p>
+        </div>
+
+        {error && (
+          <div role="alert" data-testid="status-patient-account-error" className="text-xs text-red-700">
+            {error}
+          </div>
+        )}
+
+        <ModalActions onClose={onClose} busy={createAccount.isPending} submitLabel="Create patient account" />
+      </form>
+    </Modal>
+  );
 }
 
 /** Lets the care team give a patient their own sign-in, linked to this profile. */
@@ -984,7 +1958,7 @@ const readAlerted=(userId:number):string[]=>{try{const v=JSON.parse(localStorage
 const markAlerted=(userId:number,keys:string[])=>{if(!keys.length)return;try{localStorage.setItem(`${ALERTED_KEY}-${userId}`,JSON.stringify([...readAlerted(userId),...keys].slice(-300)))}catch{/* storage unavailable */}};
 /** Android app with notifications allowed: the phone's own dose alarm makes the sound. */
 let nativeDoseAlarms=false;
-const ALERT_KINDS=['reminder','overdue','message','staff-message','ai-risk','appointment','risk','lab','prescription'];
+const ALERT_KINDS=['reminder','overdue','message','staff-message','ai-risk','appointment','risk','lab','prescription','coverage'];
 const FRESH_MS=10*60_000;
 /** Plays a sound and shows a system notification when new important notifications arrive. */
 function useNotificationAlerts(notifications:Notification[],user:AuthUser){
@@ -1005,12 +1979,12 @@ function useNotificationAlerts(notifications:Notification[],user:AuthUser){
     if(!sounding.length)return;
     const dose=sounding.some(n=>n.kind==='reminder'||n.kind==='overdue');
     if(isNativeApp){
-      const nativeAlerts=sounding.filter(n=>n.kind==='message'||n.kind==='staff-message'||n.kind==='overdue');
+      const nativeAlerts=sounding.filter(n=>n.kind==='message'||n.kind==='staff-message'||n.kind==='overdue'||n.kind==='coverage');
       const otherAlerts=sounding.filter(n=>!nativeAlerts.includes(n));
       for(const n of nativeAlerts){
         const isDose=n.kind==='overdue';
         const quiet=readPref(SOUND_KEY,'on')!=='on'||(!isDose&&inQuietHours());
-        const url=isDose?'/today':n.kind==='staff-message'?'/team-messages':n.patientId?`/messages?patient=${n.patientId}`:'/messages';
+        const url=isDose?'/today':n.kind==='coverage'?'/coverage':n.kind==='staff-message'?'/team-messages':n.patientId?`/messages?patient=${n.patientId}`:'/messages';
         void showNativeAlert({id:n.id,title:n.title,body:n.message,url,dose:isDose,silent:quiet})
           .then(ok=>{if(!ok)playChime({kind:isDose?'dose':'alert'})})
           .catch(()=>playChime({kind:isDose?'dose':'alert'}));
@@ -1097,8 +2071,9 @@ function DueDoseAlert({due,onDismiss,role}:{due:DueDose[];onDismiss:(id:number)=
 }
 function SoundSettings({user}:{user:AuthUser}){
   const [sound,setSound]=useState(readPref(SOUND_KEY,'on')),[quiet,setQuiet]=useState(readPref(QUIET_KEY,'on')),[perm,setPerm]=useState<string>(isNativeApp?'loading':typeof Notification!=='undefined'?Notification.permission:'denied');
+  const [pushStatus,setPushStatus]=useState<NativePushStatus>(getNativePushStatus);
   const [wellness,setWellness]=useState(readWellness(user.role)),[exact,setExact]=useState(true);
-  useEffect(()=>{if(!isNativeApp)return;void notificationPermission().then(p=>setPerm(p==='prompt'?'default':p));void exactAlarmsAllowed().then(setExact)},[]);
+  useEffect(()=>{if(!isNativeApp)return;const updatePushStatus=()=>setPushStatus(getNativePushStatus());void notificationPermission().then(p=>setPerm(p==='prompt'?'default':p));void exactAlarmsAllowed().then(setExact);window.addEventListener('caretrack-push-status',updatePushStatus);return()=>window.removeEventListener('caretrack-push-status',updatePushStatus)},[]);
   const allow=()=>isNativeApp
     ?requestNotificationPermission().then(p=>{setPerm(p==='prompt'?'default':p);if(p==='granted'){syncWellnessConfig(user);if(latestDoses.length)void syncNativeDoseReminders(latestDoses)}})
     :Notification.requestPermission().then(p=>{setPerm(p);if(p==='granted')void registerWellnessSync()});
@@ -1110,6 +2085,10 @@ function SoundSettings({user}:{user:AuthUser}){
     <button data-testid="button-toggle-wellness" title="Hydration reminders, health tips, motivation and quotes between 8 AM and 9 PM. Works offline." onClick={cycleWellness} className={`rounded-full border px-2.5 py-1 font-semibold ${wellness!=='off'?'border-[#9fcfc9] text-[#2f8a74]':'border-[#dce8e8] text-[#8a989b]'}`}>🌱 Wellness tips: {wellness==='off'?'off':wellness==='low'?'2/day':'4/day'}</button>
     {wellness!=='off'&&perm==='granted'&&<button data-testid="button-preview-wellness" onClick={()=>isNativeApp?void previewNativeWellness(user.name,latestDoses):postToWorker({type:'wellness-preview'})} className="rounded-full border border-[#dce8e8] px-2.5 py-1 font-semibold text-[#397d7e]">Send a tip now</button>}
     {perm==='default'&&<button data-testid="button-allow-notifications" onClick={allow} className="rounded-full border border-[#dce8e8] px-2.5 py-1 font-semibold text-[#397d7e]">{isNativeApp?'Allow notifications':'Allow pop-up alerts'}</button>}
+    {isNativeApp&&perm==='granted'&&pushStatus==='server-unconfigured'&&<span role="status" className="text-[#a56a48]">Background message alerts need Firebase credentials on the CareTrack server.</span>}
+    {isNativeApp&&perm==='granted'&&pushStatus==='android-unconfigured'&&<span role="status" className="text-[#a56a48]">Background message alerts need Firebase Android configuration in this build.</span>}
+    {isNativeApp&&perm==='granted'&&pushStatus==='error'&&<span role="status" className="text-[#a56a48]">Background message alerts couldn’t register. Check the Firebase Android app setup and server credentials.</span>}
+    {isNativeApp&&pushStatus==='registering'&&<span role="status" className="text-[#67818a]">Enabling background message alerts…</span>}
     {isNativeApp&&perm==='granted'&&!exact&&<button data-testid="button-exact-alarms" onClick={()=>void openExactAlarmSettings().then(exactAlarmsAllowed).then(setExact)} className="rounded-full border border-[#f0dfb8] px-2.5 py-1 font-semibold text-[#8a6a2a]">Allow exact reminder times</button>}
     {perm==='denied'&&<span data-testid="text-wellness-blocked" className="text-[#a56a48]">{isNativeApp?'Notifications are turned off for CareTrack in Android Settings › Apps › CareTrack › Notifications.':wellness!=='off'?'Pop-up alerts are blocked in your browser settings, so tips can’t be shown.':''}</span>}
   </div>;
@@ -1412,7 +2391,8 @@ function PrescriptionsPage({user}:{user:AuthUser}){
 }
 
 function PatientsPage({user}:{user:AuthUser}){
-  const query=useListPatients(), [search,setSearch]=useState(''), [open,setOpen]=useState(false), [editing,setEditing]=useState<Patient|null>(null);
+  const query=useListPatients(), delPatient=useDeletePatient(), qc=useQueryClient(), [search,setSearch]=useState(''), [open,setOpen]=useState(false), [editing,setEditing]=useState<Patient|null>(null);
+  const [accountOpen,setAccountOpen]=useState(false), [accountPatient,setAccountPatient]=useState<Patient|null>(null);
   const [riskFilter,setRiskFilter]=useState('all');
   // Risk status per patient from the last 30 days of adherence.
   const riskParams={from:daysAgo(29),to:dateToday()};
@@ -1429,31 +2409,123 @@ function PatientsPage({user}:{user:AuthUser}){
     <Card>
       <div className="flex flex-col gap-4 border-b border-[#eaf0f0] p-5 sm:flex-row sm:items-center sm:justify-between sm:px-6"><div><h2 className="font-bold text-[#254954]">Patient directory</h2><p className="mt-1 text-xs text-[#81969b]">{query.data?.length||0} profiles in your care</p></div><label className="flex h-10 w-full items-center gap-2 rounded-xl border border-[#dce8e8] bg-[#fbfdfd] px-3 sm:max-w-[300px]"><Search size={16} className="text-[#81969b]"/><input data-testid="input-search-patients" value={search} onChange={e=>setSearch(e.target.value)} placeholder="Search patients…" className="w-full bg-transparent text-sm outline-none placeholder:text-[#a3b3b6]"/></label></div>
       <div className="flex flex-wrap gap-2 border-b border-[#eaf0f0] px-5 py-3 sm:px-6" role="group" aria-label="Filter by status">{riskChips.map(([id,label])=>{const n=id==='all'?matching.length:matching.filter(p=>levelOf(p.id)===id).length;const dot=RISK_STYLE[id]?.dot;return <button key={id} data-testid={`button-risk-filter-${id}`} aria-pressed={riskFilter===id} onClick={()=>setRiskFilter(id)} className={`inline-flex items-center gap-1.5 rounded-full border px-3 py-1.5 text-xs font-semibold transition ${riskFilter===id?'border-[#17647a] bg-[#17647a] text-white':'border-[#dce8e8] bg-white text-[#55737a] hover:border-[#9fcfc9]'}`}>{dot&&<span className={`h-2 w-2 rounded-full ${dot}`}/>}{label}<span className="opacity-70">{n}</span></button>})}<span className="ml-auto self-center text-[11px] text-[#91a4a8]">Based on the last 30 days</span></div>
-      {query.isLoading?<div className="space-y-3 p-5" data-testid="status-loading">{[1,2,3].map(x=><div key={x} className="h-20 animate-pulse rounded-xl bg-[#f2f6f6]"/>)}</div>:query.isError?<ErrorState retry={()=>query.refetch()}/>:patients.length===0?<EmptyState title={search||riskFilter!=='all'?'No matching patients':'Your directory is ready'} body={search||riskFilter!=='all'?'Try a different search or status filter.':'Patients assigned to your care team will appear here.'} icon={Users}/>:<div className="grid gap-3 p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-3">{patients.map(p=><div key={p.id} data-testid={`card-patient-${p.id}`} className="rounded-2xl border border-[#e3eded] bg-white p-4 transition hover:border-[#b7d9d6] hover:shadow-[0_8px_22px_rgba(31,74,88,.06)]"><div className="flex items-start gap-3"><Avatar name={p.name}/><div className="min-w-0 flex-1"><Link href={`/patients/${p.id}`} data-testid={`link-patient-${p.id}`} className="block truncate text-sm font-bold text-[#31535e] hover:text-[#19777d]">{p.name}</Link><div className="mt-1 text-xs text-[#81969b]">{p.age} years · {p.sex.replace('_',' ')}</div></div><StatusPill status={p.active?'active':'inactive'}/></div><div className="mt-3"><RiskBadge level={levelOf(p.id)} suffix={riskOf(p.id)?`${riskOf(p.id)!.adherenceRate}%`:undefined}/></div><div className="mt-3 min-h-10 text-xs leading-5 text-[#758d93]">{p.conditions?.length?p.conditions.slice(0,2).join(' · '):'No conditions listed'}</div><div className="mt-3 flex items-center justify-between border-t border-[#edf2f2] pt-3"><span className="min-w-0 truncate text-[11px] text-[#8ba0a4]">{p.assignedProviderName||'Doctor not assigned'}{p.coveringProviderName&&<span className="ml-1 rounded-full bg-[#e9f2f6] px-1.5 py-0.5 font-semibold text-[#366a7d]" title={`${p.assignedProviderName} is away`}>Covering: {p.coveringProviderName}</span>}</span><div className="flex gap-1"><Link href={`/patients/${p.id}`} data-testid={`button-view-patient-${p.id}`} className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-[#287d80] hover:bg-[#eef8f6]">View profile</Link>{providerMode&&<button data-testid={`button-edit-patient-${p.id}`} onClick={()=>start(p)} className="rounded-lg px-2.5 py-1.5 text-xs font-semibold text-[#728990] hover:bg-[#f3f7f7]">Edit</button>}</div></div></div>)}</div>}
+      {query.isLoading?<div className="space-y-3 p-5" data-testid="status-loading">{[1,2,3].map(x=><div key={x} className="h-20 animate-pulse rounded-xl bg-[#f2f6f6]"/>)}</div>:query.isError?<ErrorState retry={()=>query.refetch()}/>:patients.length===0?<EmptyState title={search||riskFilter!=='all'?'No matching patients':'Your directory is ready'} body={search||riskFilter!=='all'?'Try a different search or status filter.':'Patients assigned to your care team will appear here.'} icon={Users}/>:<div className="grid gap-3 p-4 sm:grid-cols-2 sm:p-5 xl:grid-cols-3">{patients.map(p=><div key={p.id} data-testid={`card-patient-${p.id}`} className="rounded-2xl border border-[#e3eded] bg-white p-4 transition hover:border-[#b7d9d6] hover:shadow-[0_8px_22px_rgba(31,74,88,.06)]"><div className="flex items-start gap-3"><Avatar name={p.name}/><div className="min-w-0 flex-1"><Link href={`/patients/${p.id}`} data-testid={`link-patient-${p.id}`} className="block truncate text-sm font-bold text-[#31535e] hover:text-[#19777d]">{p.name}</Link><div className="mt-1 text-xs text-[#81969b]">{p.age} years · {p.sex.replace('_',' ')}</div></div><StatusPill status={p.active?'active':'inactive'}/></div><div className="mt-3"><RiskBadge level={levelOf(p.id)} suffix={riskOf(p.id)?`${riskOf(p.id)!.adherenceRate}%`:undefined}/></div><div className="mt-3 min-h-10 text-xs leading-5 text-[#758d93]">{p.conditions?.length?p.conditions.slice(0,2).join(' · '):'No conditions listed'}</div><div className="mt-3 flex items-center justify-between border-t border-[#edf2f2] pt-3"><span className="min-w-0 truncate text-[11px] text-[#8ba0a4]">{p.assignedProviderName||'Doctor not assigned'}{p.coveringProviderName&&<span className="ml-1 rounded-full bg-[#e9f2f6] px-1.5 py-0.5 font-semibold text-[#366a7d]" title={`${p.assignedProviderName} is away`}>Covering: {p.coveringProviderName}</span>}</span><div className="flex flex-wrap items-center gap-1"><Link href={`/patients/${p.id}`} data-testid={`button-view-patient-${p.id}`} className="rounded-lg px-2 py-1 text-xs font-semibold text-[#287d80] hover:bg-[#eef8f6]">View profile</Link>{providerMode&&<>
+          {!p.userId&&<button data-testid={`button-card-account-patient-${p.id}`} onClick={()=>{setAccountPatient(p);setAccountOpen(true)}} className="rounded-lg bg-[#e8f3f5] px-2 py-1 text-xs font-semibold text-[#17647a] hover:bg-[#d8eef3]">Add login</button>}
+          <button data-testid={`button-edit-patient-${p.id}`} onClick={()=>start(p)} className="rounded-lg px-2 py-1 text-xs font-semibold text-[#728990] hover:bg-[#f3f7f7]">Edit</button>
+          <button data-testid={`button-delete-patient-${p.id}`} onClick={()=>{if(!window.confirm(`Permanently delete ${p.name}? This will remove all medication records.`))return;delPatient.mutate({id:p.id},{onSuccess:()=>{qc.invalidateQueries({queryKey:getListPatientsQueryKey()});qc.invalidateQueries({queryKey:getListUsersQueryKey()})}})}} className="rounded-lg px-2 py-1 text-xs font-semibold text-red-600 hover:bg-red-50">Delete</button>
+        </>}</div></div></div>)}</div>}
     </Card>
     {open&&<PatientModal patient={editing} onClose={()=>setOpen(false)}/>}
+    {accountOpen&&<CreatePatientAccountModal initialPatient={accountPatient} user={user} onClose={()=>setAccountOpen(false)}/>}
   </div>;
 }
 
 function PatientModal({patient,onClose}:{patient:Patient|null;onClose:()=>void}){
-  const create=useCreatePatient(), update=useUpdatePatient(), qc=useQueryClient(), providers=useListProviders();
+  const create=useCreatePatient(), update=useUpdatePatient(), createAccount=useCreatePatientAccount(), qc=useQueryClient(), providers=useListProviders();
   const [error,setError]=useState('');
-  const submit=(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const f=new FormData(e.currentTarget);const data={name:String(f.get('name')),age:Number(f.get('age')),sex:String(f.get('sex')) as 'female'|'male'|'other'|'not_specified',phone:String(f.get('phone')||''),assignedProviderId:Number(f.get('assignedProviderId'))||undefined,conditions:String(f.get('conditions')||'').split(',').map(x=>x.trim()).filter(Boolean),allergies:String(f.get('allergies')||'').split(',').map(x=>x.trim()).filter(Boolean),notes:String(f.get('notes')||'')};
-    const done=()=>{qc.invalidateQueries({queryKey:getListPatientsQueryKey()});if(patient)qc.invalidateQueries({queryKey:getGetPatientQueryKey(patient.id)});onClose()};
+  const [createLogin,setCreateLogin]=useState(false);
+  const [tempPassword,setTempPassword]=useState(generateTempPassword());
+  const [createdCredentials,setCreatedCredentials]=useState<{email:string;password:string;name:string}|null>(null);
+
+  const submit=(e:FormEvent<HTMLFormElement>)=>{
+    e.preventDefault();
+    const f=new FormData(e.currentTarget);
+    const data={
+      name:String(f.get('name')),
+      age:Number(f.get('age')),
+      sex:String(f.get('sex')) as 'female'|'male'|'other'|'not_specified',
+      phone:String(f.get('phone')||''),
+      conditions:String(f.get('conditions')||'').split(',').map(x=>x.trim()).filter(Boolean),
+      allergies:String(f.get('allergies')||'').split(',').map(x=>x.trim()).filter(Boolean),
+      notes:String(f.get('notes')||'')
+    };
     const emailValue=String(f.get('email')||'').trim();
-    if(patient)update.mutate({id:patient.id,data:{...data,email:emailValue||null}},{onSuccess:done,onError:()=>setError('Could not save patient details. Please try again.')});
-    else create.mutate({data:{...data,...(emailValue?{email:emailValue}:{})}},{onSuccess:done,onError:(err)=>setError(apiError(err,'Could not create this patient. Please try again.'))});
+    const rawAssignedId=f.get('assignedProviderId');
+    const assignedProviderIdValue=rawAssignedId?Number(rawAssignedId):undefined;
+
+    if(patient){
+      update.mutate({
+        id:patient.id,
+        data:{
+          ...data,
+          email:emailValue||null,
+          assignedProviderId:assignedProviderIdValue
+        }
+      },{
+        onSuccess:()=>{
+          qc.invalidateQueries({queryKey:getListPatientsQueryKey()});
+          qc.invalidateQueries({queryKey:getGetPatientQueryKey(patient.id)});
+          onClose();
+        },
+        onError:()=>setError('Could not save patient details. Please try again.')
+      });
+    } else {
+      create.mutate({
+        data:{
+          ...data,
+          assignedProviderId:assignedProviderIdValue,
+          ...(emailValue?{email:emailValue}:{})
+        }
+      },{
+        onSuccess:(newPatient)=>{
+          qc.invalidateQueries({queryKey:getListPatientsQueryKey()});
+          if(createLogin && emailValue){
+            createAccount.mutate({
+              id:newPatient.id,
+              data:{email:emailValue,password:tempPassword,phone:data.phone||null}
+            },{
+              onSuccess:(r)=>{
+                qc.invalidateQueries({queryKey:getListPatientsQueryKey()});
+                qc.invalidateQueries({queryKey:getListUsersQueryKey()});
+                setCreatedCredentials({email:r.email,password:tempPassword,name:newPatient.name});
+              },
+              onError:(err)=>{
+                setError(`Patient saved, but login could not be created: ${apiError(err,'Check email')}`);
+              }
+            });
+          } else {
+            onClose();
+          }
+        },
+        onError:(err)=>setError(apiError(err,'Could not create this patient. Please try again.'))
+      });
+    }
   };
-  const busy=create.isPending||update.isPending;
+
+  const busy=create.isPending||update.isPending||createAccount.isPending;
+
+  if(createdCredentials){
+    return <Modal title="Patient & Account Created" subtitle="Share these mobile sign-in details with the patient." onClose={onClose}>
+      <div className="space-y-4" data-testid="panel-patient-created-with-account">
+        <div className="rounded-xl border border-[#cfe7df] bg-[#eef8f4] p-4 text-sm text-[#37796b]">
+          <div className="font-semibold">{createdCredentials.name}</div>
+          <div className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs">
+            <span className="text-[#5d8f86]">Email</span>
+            <span className="font-mono">{createdCredentials.email}</span>
+            <span className="text-[#5d8f86]">Temporary password</span>
+            <span className="font-mono font-bold" data-testid="text-temp-password">{createdCredentials.password}</span>
+          </div>
+        </div>
+        <p className="text-xs leading-5 text-[#71888e]">The patient profile was created and their mobile login is ready. They can sign into CareTrack on Android and will set their own permanent password.</p>
+        <div className="flex justify-end gap-2">
+          <button type="button" onClick={()=>navigator.clipboard?.writeText(`Email: ${createdCredentials.email}\nTemporary password: ${createdCredentials.password}`)} className="h-10 rounded-lg border border-[#dce8e8] px-4 text-sm font-semibold text-[#52737c] hover:bg-[#f5f9f9]">Copy details</button>
+          <button type="button" data-testid="button-done-patient-created" onClick={onClose} className="h-10 rounded-lg bg-[#17647a] px-4 text-sm font-semibold text-white hover:bg-[#125366]">Done</button>
+        </div>
+      </div>
+    </Modal>;
+  }
+
   return <Modal title={patient?'Edit patient profile':'Add a patient'} subtitle="A clear profile helps the care team stay in sync." onClose={onClose}><form onSubmit={submit} className="space-y-4">
     <div className="grid gap-4 sm:grid-cols-2"><Field label="Full name" name="name" required defaultValue={patient?.name}/><Field label="Age" name="age" type="number" required defaultValue={patient?.age||''}/></div>
     <div className="grid gap-4 sm:grid-cols-2"><label className="block text-xs font-semibold text-[#526f77]">Sex<select name="sex" defaultValue={patient?.sex||'not_specified'} className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal text-[#31515c]"><option value="not_specified">Prefer not to say</option><option value="female">Female</option><option value="male">Male</option><option value="other">Other</option></select></label><Field label="Phone" name="phone" defaultValue={patient?.phone||''}/></div>
-    <Field label="Email" name="email" type="email" defaultValue={patient?.email||''}/><label className="block text-xs font-semibold text-[#526f77]">Assigned doctor<select name="assignedProviderId" data-testid="select-assigned-doctor" defaultValue={patient?.assignedProviderId||''} className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal text-[#31515c]"><option value="">{patient?'Keep current doctor':'Assign automatically'}</option>{(providers.data||[]).map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select><span className="mt-1 block font-normal text-[#8ba0a4]">Changing the doctor moves this patient permanently. For short absences, use Doctor coverage instead.</span></label><Field label="Conditions (comma separated)" name="conditions" defaultValue={patient?.conditions?.join(', ')||''}/><Field label="Allergies (comma separated)" name="allergies" defaultValue={patient?.allergies?.join(', ')||''}/><label className="block text-xs font-semibold text-[#526f77]">Care notes<textarea name="notes" defaultValue={patient?.notes||''} rows={3} className="mt-1.5 w-full rounded-lg border border-input bg-white px-3 py-2 text-sm font-normal outline-none focus:border-primary"/></label>
+    <Field label="Email" name="email" type="email" required={createLogin} defaultValue={patient?.email||''}/>
+    <label className="block text-xs font-semibold text-[#526f77]">Assigned doctor<select name="assignedProviderId" data-testid="select-assigned-doctor" defaultValue={patient?.assignedProviderId||''} className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal text-[#31515c]"><option value="">{patient?'Leave unassigned':'Assign automatically'}</option>{(providers.data||[]).map(d=><option key={d.id} value={d.id}>{d.name}</option>)}</select>{!patient&&<span className="mt-1 block font-normal text-[#8ba0a4]">To request a permanent transfer later, use Doctor coverage.</span>}</label>
+    <Field label="Conditions (comma separated)" name="conditions" defaultValue={patient?.conditions?.join(', ')||''}/><Field label="Allergies (comma separated)" name="allergies" defaultValue={patient?.allergies?.join(', ')||''}/><label className="block text-xs font-semibold text-[#526f77]">Care notes<textarea name="notes" defaultValue={patient?.notes||''} rows={3} className="mt-1.5 w-full rounded-lg border border-input bg-white px-3 py-2 text-sm font-normal outline-none focus:border-primary"/></label>
+    {!patient&&<div className="rounded-xl border border-[#dce8e8] bg-[#f9fcfa] p-3.5"><label className="flex items-center gap-2.5 text-xs font-bold text-[#2e525a] cursor-pointer"><input type="checkbox" data-testid="checkbox-create-patient-account" checked={createLogin} onChange={(e)=>setCreateLogin(e.target.checked)} className="h-4 w-4 rounded border-gray-300 text-[#17647a] focus:ring-[#17647a]"/> Create patient sign-in account now</label><p className="mt-1 text-[11px] text-[#789196] pl-6.5">Generates mobile login credentials immediately so the patient can log their doses.</p>{createLogin&&<div className="mt-3 space-y-3 pt-3 border-t border-[#e2eded]"><div><div className="flex items-center justify-between"><span className="text-xs font-semibold text-[#526f77]">Temporary password</span><button type="button" data-testid="button-generate-modal-password" onClick={()=>setTempPassword(generateTempPassword())} className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#287d80] hover:underline"><KeyRound size={12}/> Generate</button></div><PasswordInput testId="input-modal-patient-password" value={tempPassword} onChange={setTempPassword} required minLength={8} className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal outline-none focus:border-primary"/></div></div>}</div>}
     {error&&<div role="alert" data-testid="status-patient-form-error" className="text-xs text-red-700">{error}</div>}<ModalActions onClose={onClose} busy={busy} submitLabel={patient?'Save changes':'Add patient'}/>
   </form></Modal>;
 }
 
-// ---- Patient profile: grouped into tabs so nothing important sits at the bottom of a long page ----
 const PATIENT_TABS=[
   {id:'overview',label:'Overview'},
   {id:'personal',label:'Personal information'},
@@ -1761,17 +2833,18 @@ function UserRow({user,onEdit}:{user:User;onEdit:()=>void}){
   const toggle=()=>update.mutate({id:user.id,data:{active:!user.active}},{onSuccess:()=>qc.invalidateQueries({queryKey:getListUsersQueryKey()})});
   return <div data-testid={`row-user-${user.id}`} className="flex flex-wrap items-center gap-3 px-5 py-4 sm:px-6"><Avatar name={user.name} small/><div className="min-w-0 flex-1"><div className="truncate text-sm font-semibold text-[#31535e]" data-testid={`text-user-${user.id}`}>{user.name}</div><div className="mt-1 truncate text-xs text-[#81969b]">{user.email}{user.phone?` · ${user.phone}`:''} · Joined {new Date(user.createdAt).toLocaleDateString()}</div></div><span className="rounded-full bg-[#eef5f5] px-2.5 py-1 text-[11px] font-semibold text-[#54747a]">{roleLabel(user.role)}</span>{user.phone&&<span data-testid={`status-phone-verified-${user.id}`} title={user.phoneVerified?'This number was confirmed with an SMS login code':'Not confirmed yet: confirmed the first time this user signs in with an SMS code'} className={`rounded-full px-2.5 py-1 text-[11px] font-semibold ${user.phoneVerified?'bg-[#e5f5ee] text-[#28745a]':'bg-[#f2f3f3] text-[#778589]'}`}>{user.phoneVerified?'SMS verified':'SMS not verified'}</span>}{user.mustChangePassword&&<span title="Must set a new password at next sign-in" className="rounded-full bg-[#fbf1df] px-2.5 py-1 text-[11px] font-semibold text-[#99702f]">Temporary password</span>}<StatusPill status={user.active?'active':'inactive'}/><button data-testid={`button-edit-user-${user.id}`} onClick={onEdit} className="rounded-lg border border-[#dce8e8] px-3 py-2 text-xs font-semibold text-[#54737b] hover:bg-[#f5f9f9]">Edit</button><button data-testid={`button-toggle-user-${user.id}`} onClick={toggle} disabled={update.isPending} className="rounded-lg border border-[#dce8e8] px-3 py-2 text-xs font-semibold text-[#54737b] hover:bg-[#f5f9f9]">{user.active?'Deactivate':'Activate'}</button></div>;
 }
-function UserModal({user,defaultRole='provider',onClose}:{user:User|null;defaultRole?:string;onClose:()=>void}){
+function UserModal({user,defaultRole='provider',title,lockRole=false,onClose}:{user:User|null;defaultRole?:string;title?:string;lockRole?:boolean;onClose:()=>void}){
   const create=useCreateUser(),update=useUpdateUser(),qc=useQueryClient(),[error,setError]=useState('');
   const [tempPassword,setTempPassword]=useState(user?'':generateTempPassword()),[created,setCreated]=useState<{name:string;email:string;password:string;reset:boolean}|null>(null);
   const submit=(e:FormEvent<HTMLFormElement>)=>{e.preventDefault();const f=new FormData(e.currentTarget);const name=String(f.get('name')),email=String(f.get('email')),password=String(f.get('password')||''),phone=String(f.get('phone')||'').trim()||null;
     const success=()=>{qc.invalidateQueries({queryKey:getListUsersQueryKey()});if(password)setCreated({name,email,password,reset:!!user});else onClose()};
     if(user){update.mutate({id:user.id,data:{name,email,phone,...(password?{password}:{})}},{onSuccess:success,onError:()=>setError('Could not update this user. Check the details and try again.')})}
-    else create.mutate({data:{name,email,password,phone,role:String(f.get('role')) as 'admin'|'provider'|'patient'|'caregiver'}},{onSuccess:success,onError:()=>setError('Could not create the user. Check the email and password requirements.')})
+    else create.mutate({data:{name,email,password,phone,role:(lockRole ? defaultRole : String(f.get('role'))) as 'admin'|'provider'|'patient'|'caregiver'}},{onSuccess:success,onError:()=>setError('Could not create the user. Check the email and password requirements.')})
   };
   const busy=create.isPending||update.isPending;
   if(created)return <Modal title={created.reset?'Password reset':'Account created'} subtitle="Share these sign-in details privately." onClose={onClose}><div className="space-y-4" data-testid="panel-account-created"><div className="rounded-xl border border-[#cfe7df] bg-[#eef8f4] p-4 text-sm text-[#37796b]"><div className="font-semibold">{created.name}</div><div className="mt-2 grid grid-cols-[auto_1fr] gap-x-3 gap-y-1 text-xs"><span className="text-[#5d8f86]">Email</span><span className="font-mono">{created.email}</span><span className="text-[#5d8f86]">Temporary password</span><span className="font-mono font-bold" data-testid="text-temp-password">{created.password}</span></div></div><p className="text-xs leading-5 text-[#71888e]">At first sign-in they’ll verify a code sent to their Gmail or phone, then must replace this temporary password with their own.</p><div className="flex justify-end gap-2"><button type="button" onClick={()=>navigator.clipboard?.writeText(`Email: ${created.email}\nTemporary password: ${created.password}`)} className="h-10 rounded-lg border border-[#dce8e8] px-4 text-sm font-semibold text-[#52737c] hover:bg-[#f5f9f9]">Copy details</button><button type="button" data-testid="button-done-created" onClick={onClose} className="h-10 rounded-lg bg-[#17647a] px-4 text-sm font-semibold text-white hover:bg-[#125366]">Done</button></div></div></Modal>;
-  return <Modal title={user?'Edit team member':defaultRole==='provider'?'Add a doctor':'Add a user'} subtitle={user?'Update account details. Role access is controlled by the administrator.':'Create a demo login and choose the right workspace role.'} onClose={onClose}><form onSubmit={submit} className="space-y-4"><Field label="Full name" name="name" required defaultValue={user?.name}/><Field label="Email address" name="email" type="email" required defaultValue={user?.email}/><Field label="Mobile number (for SMS login codes)" name="phone" type="tel" defaultValue={user?.phone||''} placeholder="09XXXXXXXXX"/><div><div className="flex items-center justify-between"><span className="text-xs font-semibold text-[#526f77]">{user?'Reset password (leave blank to keep current)':'Temporary password'}</span><button type="button" data-testid="button-generate-password" onClick={()=>setTempPassword(generateTempPassword())} className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#287d80] hover:underline"><KeyRound size={12}/> Generate</button></div><PasswordInput testId="input-user-password" name="password" value={tempPassword} onChange={setTempPassword} required={!user} minLength={8} autoComplete="new-password" className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal outline-none focus:border-primary"/><p className="mt-1 text-[11px] text-[#8ba0a4]">They’ll be asked to create their own password the first time they sign in.</p></div>{!user&&<label className="block text-xs font-semibold text-[#526f77]">Role<select name="role" defaultValue={defaultRole} className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal">  <option value="provider">Doctor</option><option value="patient">Patient</option><option value="caregiver">Caregiver</option><option value="admin">Administrator</option></select></label>}{error&&<div data-testid="status-user-form-error" className="text-xs text-red-700">{error}</div>}<ModalActions onClose={onClose} busy={busy} submitLabel={user?'Save changes':'Create user'}/></form></Modal>;
+  const modalTitle = title || (user ? (user.role === 'provider' ? 'Edit doctor' : 'Edit team member') : defaultRole === 'provider' ? 'Add a doctor' : 'Add a user');
+  return <Modal title={modalTitle} subtitle={user?'Update account details. Role access is controlled by the administrator.':'Create a demo login and choose the right workspace role.'} onClose={onClose}><form onSubmit={submit} className="space-y-4"><Field label="Full name" name="name" required defaultValue={user?.name}/><Field label="Email address" name="email" type="email" required defaultValue={user?.email}/><Field label="Mobile number (for SMS login codes)" name="phone" type="tel" defaultValue={user?.phone||''} placeholder="09XXXXXXXXX"/><div><div className="flex items-center justify-between"><span className="text-xs font-semibold text-[#526f77]">{user?'Reset password (leave blank to keep current)':'Temporary password'}</span><button type="button" data-testid="button-generate-password" onClick={()=>setTempPassword(generateTempPassword())} className="inline-flex items-center gap-1 text-[11px] font-semibold text-[#287d80] hover:underline"><KeyRound size={12}/> Generate</button></div><PasswordInput testId="input-user-password" name="password" value={tempPassword} onChange={setTempPassword} required={!user} minLength={8} autoComplete="new-password" className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal outline-none focus:border-primary"/><p className="mt-1 text-[11px] text-[#8ba0a4]">They’ll be asked to create their own password the first time they sign in.</p></div>{!user&&!lockRole&&<label className="block text-xs font-semibold text-[#526f77]">Role<select name="role" defaultValue={defaultRole} className="mt-1.5 h-10 w-full rounded-lg border border-input bg-white px-3 text-sm font-normal">  <option value="provider">Doctor</option><option value="patient">Patient</option><option value="caregiver">Caregiver</option><option value="admin">Administrator</option></select></label>}{error&&<div data-testid="status-user-form-error" className="text-xs text-red-700">{error}</div>}<ModalActions onClose={onClose} busy={busy} submitLabel={user?'Save changes':'Create user'}/></form></Modal>;
 }
 function AccessDenied(){return <Card className="p-8"><EmptyState title="This page isn’t part of your account" body="Your role decides which pages you can open. Use the menu to go to your pages." icon={ShieldCheck}/><div className="flex justify-center"><Link href="/" className="inline-flex h-10 items-center rounded-xl bg-[#17647a] px-4 text-sm font-semibold text-white">Go to my home page</Link></div></Card>}
 

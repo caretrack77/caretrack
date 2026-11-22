@@ -75,6 +75,33 @@ and use **Build › Generate Signed App Bundle / APK** in Android Studio.
 
 After changing web code, always run `android:sync` (or `android:apk`) so the APK gets the new build.
 
+## Message notifications when the app is closed
+
+Local notifications cover medication alarms and wellness tips. New-message alerts while the app is
+backgrounded or closed use Firebase Cloud Messaging (FCM); the in-app live connection alone cannot
+wake a closed Android app.
+
+1. In the [Firebase Console](https://console.firebase.google.com/), create a Firebase project and
+   register an Android app with package name `com.caretrack.app`.
+2. Download `google-services.json` into
+   `artifacts/caretrack/android/app/google-services.json`. It contains project identifiers, not a
+   server credential, and is ignored by Git. Keep a copy available on each machine that builds the
+   APK.
+3. In Firebase Project settings → **Service accounts**, generate a private key. Add the entire JSON
+   contents to the Render service's `FIREBASE_SERVICE_ACCOUNT_JSON` environment variable. Treat
+   this file as a secret; never commit it or put it in the APK. Ensure the Firebase Cloud Messaging
+   API is enabled and the service account can send FCM messages.
+4. Apply the database schema update with `pnpm db:push`, then rebuild and install the APK:
+   `pnpm --filter @workspace/caretrack run android:apk:debug`.
+5. Sign in, allow Android notifications, and check the Messages and updates channel is enabled in
+   Android Settings → Apps → CareTrack → Notifications.
+
+The app registers the signed-in device's FCM token with CareTrack and removes it when signing out.
+Push payloads contain only a generic message alert and an in-app destination, not message contents or
+patient details. Render needs the new `FIREBASE_SERVICE_ACCOUNT_JSON` value; without it, the API
+stores messages normally but cannot deliver alerts while the app is closed. Firebase requires
+Google Play services on an Android emulator.
+
 ## Server setup for the app
 
 1. Deploy the API over **HTTPS** (Render, Railway, a VPS behind Nginx/Caddy, or a Cloudflare tunnel).

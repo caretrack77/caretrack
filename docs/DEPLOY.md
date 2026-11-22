@@ -40,12 +40,16 @@ All current changes must be on GitHub, because Render builds from there.
 | `SESSION_SECRET` | **Exactly** the same as in `.env`. It also unlocks the encrypted messages and lab files; a different value makes them unreadable. |
 | `GMAIL_USER`, `GMAIL_APP_PASSWORD` | Same as `.env`, or leave empty (codes are then shown on screen) |
 | `GROQ_API_KEY`, `ANTHROPIC_API_KEY` | Optional; leave empty to use the built-in answers |
+| `FIREBASE_SERVICE_ACCOUNT_JSON` | Firebase service-account JSON for Android message alerts; configure FCM as described in [docs/ANDROID.md](./ANDROID.md) |
 
 4. Click **Apply**. The first build takes about 5 minutes.
 5. When it says **Live**, open `https://<your-service>.onrender.com/api/healthz` in a browser.
    It must show `{"status":"ok"}`. `https://<your-service>.onrender.com` shows the website.
 
 If the name `caretrack-app` is taken, Render adds a few letters; use the address Render shows.
+
+After deploying the updated code, run `pnpm db:push` from a local checkout whose root `.env`
+points to the same Supabase database. This creates the Android push-token table.
 
 ### 3. Build the app with the permanent address
 

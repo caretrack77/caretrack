@@ -66,6 +66,22 @@ export async function ensureSchemaAdditions(): Promise<void> {
       ON "caretrack_staff_messages" USING btree ("sender_id", "recipient_id", "created_at");
     CREATE INDEX IF NOT EXISTS "caretrack_staff_messages_recipient_idx"
       ON "caretrack_staff_messages" USING btree ("recipient_id", "read_at");
+    CREATE TABLE IF NOT EXISTS "caretrack_patient_transfer_requests" (
+      "id" serial PRIMARY KEY NOT NULL,
+      "patient_id" integer NOT NULL REFERENCES "caretrack_patients"("id") ON DELETE cascade,
+      "from_provider_id" integer NOT NULL REFERENCES "caretrack_users"("id") ON DELETE cascade,
+      "to_provider_id" integer NOT NULL REFERENCES "caretrack_users"("id") ON DELETE cascade,
+      "reason" text,
+      "status" text DEFAULT 'pending' NOT NULL,
+      "created_at" timestamp with time zone DEFAULT now() NOT NULL,
+      "responded_at" timestamp with time zone
+    );
+    CREATE INDEX IF NOT EXISTS "caretrack_patient_transfer_requests_from_idx"
+      ON "caretrack_patient_transfer_requests" USING btree ("from_provider_id", "status");
+    CREATE INDEX IF NOT EXISTS "caretrack_patient_transfer_requests_to_idx"
+      ON "caretrack_patient_transfer_requests" USING btree ("to_provider_id", "status");
+    CREATE INDEX IF NOT EXISTS "caretrack_patient_transfer_requests_patient_idx"
+      ON "caretrack_patient_transfer_requests" USING btree ("patient_id");
   `);
 }
 
