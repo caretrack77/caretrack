@@ -19,7 +19,7 @@
 // Security: data is kept per server and per user; signing out removes the saved copies.
 // Changes not yet uploaded stay on the device for the same user, so nothing they entered is
 // lost, and are never sent with another user's session.
-import { apiRequest, isUnreachableStatus, setOfflineAdapter, type OfflineRequest } from '@workspace/api-client-react';
+import { apiRequest, customFetch, isUnreachableStatus, OfflineError, setOfflineAdapter, type OfflineRequest } from '@workspace/api-client-react';
 import { getServerUrl, isNativeApp } from './native';
 
 // ---------------------------------------------------------------- types
@@ -540,6 +540,18 @@ export async function discardChange(id: string): Promise<void> {
 /** Tries waiting and blocked changes right away (e.g. after signing in again). */
 export const retryAll = () => syncNow(true);
 
+async function checkServerReachability(): Promise<void> {
+  if (!navigator.onLine) {
+    setReachable(false);
+    return;
+  }
+  try {
+    await customFetch('/api/healthz');
+  } catch (error) {
+    if (!(error instanceof OfflineError)) console.warn('CareTrack server health check failed', error);
+  }
+}
+
 /** Waiting changes for the signed-in user, for the sign-out warning. */
 export const unsyncedCount = () => mine().length;
 
@@ -582,11 +594,15 @@ export async function initOffline(): Promise<void> {
   // Entries interrupted mid-upload by the app closing go back to waiting.
   for (const e of entries.filter((x) => x.state === 'syncing')) await saveEntry({ ...e, state: 'pending' });
   setOfflineAdapter({ handleMutation, afterGet, onUnreachable, onReachable: setReachable });
-  window.addEventListener('online', () => { reachable = true; emit(); void syncNow(); });
+  window.addEventListener('online', () => { void checkServerReachability(); void syncNow(); });
   window.addEventListener('offline', () => { emit(); });
-  document.addEventListener('visibilitychange', () => { if (!document.hidden) void syncNow(); });
-  window.setInterval(() => { if (mine().some((e) => e.state !== 'conflict' && e.state !== 'rejected')) void syncNow(); }, 15_000);
+  document.addEventListener('visibilitychange', () => { if (!document.hidden) { void checkServerReachability(); void syncNow(); } });
+  window.setInterval(() => {
+    if (!reachable) void checkServerReachability();
+    if (mine().some((e) => e.state !== 'conflict' && e.state !== 'rejected')) void syncNow();
+  }, 15_000);
   emit();
+  void checkServerReachability();
   void syncNow();
 }
 

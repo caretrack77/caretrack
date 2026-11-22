@@ -482,6 +482,7 @@ async function sendRequest<T>(
   }
 
   const requestInfo = { method, url: resolveUrl(input) };
+  const isAssistantRequest = /(?:^|\/)api\/assistant(?:\?|$)/.test(requestInfo.url);
 
   let response: Response;
   try {
@@ -495,7 +496,7 @@ async function sendRequest<T>(
   const issuedToken = response.headers.get(SESSION_HEADER);
   if (issuedToken && _sessionTokenListener) _sessionTokenListener(issuedToken);
 
-  if (isUnreachableStatus(response.status)) {
+  if (isUnreachableStatus(response.status) && !isAssistantRequest) {
     _offlineAdapter?.onReachable?.(false);
     throw new OfflineError("The CareTrack server can’t be reached right now. Please try again shortly.");
   }
