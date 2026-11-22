@@ -2,7 +2,7 @@ import { GoogleGenAI } from "npm:@google/genai";
 import { createClient } from "npm:@supabase/supabase-js@2";
 
 const cors = { "Access-Control-Allow-Origin": "*", "Access-Control-Allow-Headers": "authorization, apikey, content-type", "Access-Control-Allow-Methods": "POST, OPTIONS" };
-const systemInstruction = "CareTrack chatbot for patients/caretakers only. Answer ONLY from given Supabase JSON. Never guess, diagnose, or use outside info. If absent, say: 'Not found in your CareTrack records.' Refuse off-topic or other-patient queries. Max 2-3 short sentences.";
+const systemInstruction = "CareTrack chatbot for patients/caretakers only. Answer ONLY from the supplied CareTrack records. Answer in the same language as the user's question. For dates and schedules, use the exact supplied values and do not calculate or guess. Never diagnose or use outside information. If information is absent, say it is not found in CareTrack records. Refuse off-topic or other-patient queries. Keep answers to 2-3 short sentences.";
 const json = (body: unknown, status = 200) => new Response(JSON.stringify(body), { status, headers: { ...cors, "Content-Type": "application/json" } });
 const decode = (part: string) => Uint8Array.from(atob(part.replace(/-/g, "+").replace(/_/g, "/") + "===".slice((part.length + 3) % 4)), c => c.charCodeAt(0));
 
@@ -43,14 +43,27 @@ Deno.serve(async req => {
   const inScope = (table: string, columns: string, order: string) => patientIds.length
     ? db.from(table).select(columns).in("patient_id", patientIds).order(order, { ascending: false }).limit(12)
     : Promise.resolve({ data: [] as Record<string, unknown>[], error: null });
-  const [patients, medications, appointments, doses] = await Promise.all([
+  const [patients, medications, appointments, doses, healthMetrics, healthLogs, medicalHistory, labResults] = await Promise.all([
     patientIds.length ? db.from("caretrack_patients").select("id,name,age,sex,conditions,allergies").in("id", patientIds).limit(10) : Promise.resolve({ data: [], error: null }),
     inScope("caretrack_medications", "patient_id,name,dosage,form,frequency,times_per_day,schedule_times,start_date,end_date,instructions,active", "created_at"),
     inScope("caretrack_appointments", "patient_id,scheduled_at,reason,status,notes", "scheduled_at"),
     inScope("caretrack_dose_logs", "patient_id,medication_id,scheduled_time,taken_time,status", "scheduled_time"),
+    inScope("caretrack_health_metrics", "patient_id,metric_type,value,secondary_value,unit,recorded_at,out_of_range", "recorded_at"),
+    inScope("caretrack_health_logs", "patient_id,recorded_at,symptoms,notes", "recorded_at"),
+    inScope("caretrack_medical_history", "patient_id,occurred_on,title,notes,active", "occurred_on"),
+    inScope("caretrack_lab_results", "patient_id,category,title,notes,review_comment,reviewed_at,created_at", "created_at"),
   ]);
-  if ([patients, medications, appointments, doses].some(x => x.error)) return json({ error: "Could not load CareTrack records" }, 500);
-  const data = { patients: patients.data ?? [], medications: medications.data ?? [], appointments: appointments.data ?? [], doseLogs: doses.data ?? [] };
+  if ([patients, medications, appointments, doses, healthMetrics, healthLogs, medicalHistory, labResults].some(x => x.error)) return json({ error: "Could not load CareTrack records" }, 500);
+  const data = {
+    patients: patients.data ?? [],
+    medications: medications.data ?? [],
+    appointments: appointments.data ?? [],
+    doseLogs: doses.data ?? [],
+    healthMetrics: healthMetrics.data ?? [],
+    healthLogs: healthLogs.data ?? [],
+    medicalHistory: medicalHistory.data ?? [],
+    labResults: labResults.data ?? [],
+  };
   const history = Array.isArray(input.history) ? input.history.slice(-6).filter(x => x && ["user", "model"].includes(x.role) && typeof x.text === "string").map(x => ({ role: x.role, parts: [{ text: x.text.slice(0, 500) }] })) : [];
   try {
     const ai = new GoogleGenAI({ apiKey: Deno.env.get("GEMINI_API_KEY")! });

@@ -2,6 +2,8 @@
 
 Website and Android chat both use the authenticated CareTrack API. The API checks the CareTrack session and patient/caregiver role, then calls the Supabase Edge Function with a short-lived signed JWT. The Gemini API key stays in Supabase and is never sent to either client.
 
+Questions about the next dose, missed doses, active medication schedules, upcoming appointments, and the last 7 days of dose progress are answered directly from the signed-in user's accessible CareTrack API records. Other supported care-record questions use Gemini with only that user's scoped records. If Gemini is unavailable, these direct record lookups continue to work.
+
 ## Configure secrets
 
 1. In Supabase **Project Settings → Edge Functions → Secrets**, set `GEMINI_API_KEY` to your Google AI Studio key.

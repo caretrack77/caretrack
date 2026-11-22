@@ -5,6 +5,7 @@
  * CareTrack patient care platform API
  * OpenAPI spec version: 0.1.0
  */
+import type { AssistantInputHistoryItem } from './assistantInputHistoryItem';
 
 export interface AssistantInput {
   /**
@@ -12,5 +13,5 @@ export interface AssistantInput {
      * @maxLength 500
      */
   message: string;
-  history?: { role: 'user' | 'model'; text: string }[];
+  history?: AssistantInputHistoryItem[];
 }

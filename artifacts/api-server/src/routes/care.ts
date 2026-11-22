@@ -16,6 +16,7 @@ import {
 import {
   appointmentsTable,
   db,
+  doseLogsTable,
   labResultsTable,
   medicationsTable,
   notificationsTable,
@@ -39,6 +40,11 @@ import {
   RESTRICTED_MEDICAL_REQUEST,
   TOPIC_WORDS,
 } from "../lib/chatbot-guards";
+import {
+  answerFromAssistantRecords,
+  assistantRecordIntent,
+} from "../lib/assistant-record-answers";
+import { ensureDoseEventsForDate, manilaDate } from "../lib/dose-scheduler";
 
 const router: IRouter = Router();
 router.use(authenticate, requireUser);
@@ -68,7 +74,7 @@ async function geminiAssistantReply(userId: number, message: string, history: { 
     body: JSON.stringify({ message, history: history.slice(-6) }),
     signal: AbortSignal.timeout(25_000),
   });
-  if (!response.ok) return null;
+  if (!response.ok) throw new Error(`Gemini assistant request failed (${response.status}).`);
   const data = await response.json() as { reply?: unknown };
   return typeof data.reply === "string" && data.reply.trim() ? data.reply.trim() : null;
 }
@@ -88,6 +94,137 @@ async function notify(userIds: number[], patientId: number, kind: string, title:
   if (unique.length) {
     await db.insert(notificationsTable).values(unique.map((userId) => ({ userId, patientId, kind, title, message })));
   }
+}
+
+async function answerFromApiRecords(user: NonNullable<ReturnType<typeof currentUser>>, question: string) {
+    const intent = assistantRecordIntent(question);
+    if (!intent) return null;
+
+    const patientIds = await getVisiblePatientIds(user);
+    if (patientIds.length === 0) {
+      return "I couldn't find a patient profile linked to your CareTrack account. Please ask your care team to check your account access.";
+    }
+
+    const now = new Date();
+    if (intent === "next-dose") {
+      const date = new Date(`${manilaDate(now)}T00:00:00.000Z`);
+      for (let day = 0; day < 7; day += 1) {
+        await ensureDoseEventsForDate(manilaDate(date), patientIds);
+        date.setUTCDate(date.getUTCDate() + 1);
+      }
+      const rows = await db
+        .select({
+          medicationName: medicationsTable.name,
+          dosage: medicationsTable.dosage,
+          scheduledTime: doseLogsTable.scheduledTime,
+          patientName: patientsTable.name,
+        })
+        .from(doseLogsTable)
+        .innerJoin(medicationsTable, eq(doseLogsTable.medicationId, medicationsTable.id))
+        .innerJoin(patientsTable, eq(doseLogsTable.patientId, patientsTable.id))
+        .where(and(
+          inArray(doseLogsTable.patientId, patientIds),
+          eq(doseLogsTable.status, "scheduled"),
+          gte(doseLogsTable.scheduledTime, now),
+          lte(doseLogsTable.scheduledTime, new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000)),
+        ))
+        .orderBy(asc(doseLogsTable.scheduledTime))
+        .limit(10);
+      const names = new Set(rows.map((row) => row.patientName));
+      return answerFromAssistantRecords(question, intent, rows.map((row) => ({
+        ...row,
+        patientName: names.size > 1 ? row.patientName : undefined,
+      })));
+    }
+
+    if (intent === "missed-dose") {
+      const rows = await db
+        .select({
+          medicationName: medicationsTable.name,
+          dosage: medicationsTable.dosage,
+          scheduledTime: doseLogsTable.scheduledTime,
+          patientName: patientsTable.name,
+        })
+        .from(doseLogsTable)
+        .innerJoin(medicationsTable, eq(doseLogsTable.medicationId, medicationsTable.id))
+        .innerJoin(patientsTable, eq(doseLogsTable.patientId, patientsTable.id))
+        .where(and(
+          inArray(doseLogsTable.patientId, patientIds),
+          eq(doseLogsTable.status, "missed"),
+          gte(doseLogsTable.scheduledTime, new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)),
+          lte(doseLogsTable.scheduledTime, now),
+        ))
+        .orderBy(desc(doseLogsTable.scheduledTime))
+        .limit(10);
+      const names = new Set(rows.map((row) => row.patientName));
+      return answerFromAssistantRecords(question, intent, rows.map((row) => ({
+        ...row,
+        patientName: names.size > 1 ? row.patientName : undefined,
+      })));
+    }
+
+    if (intent === "medications") {
+      const rows = await db
+        .select({
+          name: medicationsTable.name,
+          dosage: medicationsTable.dosage,
+          frequency: medicationsTable.frequency,
+          timesPerDay: medicationsTable.timesPerDay,
+          scheduleTimes: medicationsTable.scheduleTimes,
+          daysOfWeek: medicationsTable.daysOfWeek,
+          intervalHours: medicationsTable.intervalHours,
+          instructions: medicationsTable.instructions,
+          patientName: patientsTable.name,
+        })
+        .from(medicationsTable)
+        .innerJoin(patientsTable, eq(medicationsTable.patientId, patientsTable.id))
+        .where(and(
+          inArray(medicationsTable.patientId, patientIds),
+          eq(medicationsTable.active, true),
+        ))
+        .orderBy(asc(patientsTable.name), asc(medicationsTable.name))
+        .limit(20);
+      const names = new Set(rows.map((row) => row.patientName));
+      return answerFromAssistantRecords(question, intent, rows.map((row) => ({
+        ...row,
+        scheduleTimes: row.scheduleTimes ?? [],
+        daysOfWeek: row.daysOfWeek ?? [],
+        patientName: names.size > 1 ? row.patientName : undefined,
+      })));
+    }
+
+    if (intent === "appointment") {
+      const rows = await db
+        .select({
+          scheduledAt: appointmentsTable.scheduledAt,
+          reason: appointmentsTable.reason,
+          patientName: patientsTable.name,
+        })
+        .from(appointmentsTable)
+        .innerJoin(patientsTable, eq(appointmentsTable.patientId, patientsTable.id))
+        .where(and(
+          inArray(appointmentsTable.patientId, patientIds),
+          eq(appointmentsTable.status, "scheduled"),
+          gte(appointmentsTable.scheduledAt, now),
+        ))
+        .orderBy(asc(appointmentsTable.scheduledAt))
+        .limit(10);
+      const names = new Set(rows.map((row) => row.patientName));
+      return answerFromAssistantRecords(question, intent, rows.map((row) => ({
+        ...row,
+        patientName: names.size > 1 ? row.patientName : undefined,
+      })));
+    }
+
+    const rows = await db
+      .select({ status: doseLogsTable.status })
+      .from(doseLogsTable)
+      .where(and(
+        inArray(doseLogsTable.patientId, patientIds),
+        gte(doseLogsTable.scheduledTime, new Date(now.getTime() - 7 * 24 * 60 * 60 * 1000)),
+        lte(doseLogsTable.scheduledTime, now),
+      ));
+    return answerFromAssistantRecords(question, intent, rows);
 }
 
 // ---------------------------------------------------------------- Lab results
@@ -396,11 +533,18 @@ router.post("/assistant", chatbotRateLimit, async (req, res): Promise<void> => {
   if (PROMPT_INJECTION.test(q)) { reply("I can only help with your medicines, dose schedule, progress, lab results and check-ups. I cannot change my safety instructions.", false); return; }
   if (!TOPIC_WORDS.test(q)) { reply("I can only help with your medicines, dose schedule, progress, lab results and check-ups. For anything else, please ask your care team in Messages.", false); return; }
   try {
+    const recordAnswer = await answerFromApiRecords(user, q);
+    if (recordAnswer) { reply(recordAnswer); return; }
+  } catch (error) {
+    req.log?.warn({ err: error }, "Could not answer from CareTrack records; trying Gemini");
+  }
+  try {
     const answer = await geminiAssistantReply(user.id, q, parsed.data.history ?? []);
-    if (!answer) { res.status(502).json({ error: "CareTrack AI is temporarily unavailable." }); return; }
+    if (!answer) { res.status(502).json({ error: "CareTrack AI returned an empty answer." }); return; }
     reply(answer);
-  } catch {
-    res.status(503).json({ error: "CareTrack AI is not configured yet." });
+  } catch (error) {
+    req.log?.error({ err: error }, "Gemini assistant request failed");
+    res.status(503).json({ error: "Gemini AI is not available. Try a question about your next dose, medication schedule, upcoming check-up, or recent dose progress." });
   }
 });
 export default router;
