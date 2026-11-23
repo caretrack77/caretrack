@@ -1468,7 +1468,7 @@ export const UpdateAppointmentResponse = zod.object({
 
 
 /**
- * @summary Ask the CareTrack assistant about your medications (off-topic questions are declined)
+ * @summary Ask the CareTrack assistant about records, general questions, and Whealth Clinic information
  */
 export const askAssistantBodyMessageMax = 500;
 

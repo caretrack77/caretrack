@@ -5638,7 +5638,7 @@ export const getAskAssistantUrl = () => {
 }
 
 /**
- * @summary Ask the CareTrack assistant about your medications (off-topic questions are declined)
+ * @summary Ask the CareTrack assistant about records, general questions, and Whealth Clinic information
  */
 export const askAssistant = async (assistantInput: AssistantInput, options?: Parameters<typeof customFetch>[1]): Promise<AssistantReply> => {
 
@@ -5704,7 +5704,7 @@ const {mutation: mutationOptions, request: requestOptions} = options ?
     export type AskAssistantMutationVariables = {data: BodyType<AssistantInput>}
 
     /**
- * @summary Ask the CareTrack assistant about your medications (off-topic questions are declined)
+ * @summary Ask the CareTrack assistant about records, general questions, and Whealth Clinic information
  */
 export const useAskAssistant = <TError = ErrorType<unknown>,
     TContext = unknown>(options?: { mutation?:UseMutationOptions<Awaited<ReturnType<typeof askAssistant>>, TError,AskAssistantMutationVariables, TContext>, request?: SecondParameter<typeof customFetch>}

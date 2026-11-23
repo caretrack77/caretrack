@@ -6,7 +6,7 @@ CareTrack helps patients, caregivers, and doctors coordinate medication schedule
 
 ## What is new
 
-The recent implementation work extended the original adherence tracker with health-aware risk prediction and reports, patient health recording, caregiver recording permissions, guarded chatbot answers, mobile/offline support, and authenticated live updates. CareTrack also ships as a native **Android app (APK)** built with Capacitor, with offline medication reminders and wellness tips. Firebase Cloud Messaging can deliver generic message alerts while the Android app is backgrounded or closed when Firebase is configured; see [docs/ANDROID.md](docs/ANDROID.md). The feature walkthrough below explains the user experience and the data flow; the change log records the corresponding implementation areas and how to demonstrate them.
+The recent implementation work extended the original adherence tracker with health-aware risk prediction and reports, patient health recording, caregiver recording permissions, a Gemini-backed chatbot, mobile/offline support, and authenticated live updates. The chatbot supports safe general conversation and uses the official Whealth Clinic location and hours when answering clinic questions. The responsive login screen uses the supplied Whealth branding and email/password icon designs. CareTrack also ships as a native **Android app (APK)** built with Capacitor, with offline medication reminders and wellness tips. Firebase Cloud Messaging can deliver generic message alerts while the Android app is backgrounded or closed when Firebase is configured; see [docs/ANDROID.md](docs/ANDROID.md). The feature walkthrough below explains the user experience and the data flow; the change log records the corresponding implementation areas and how to demonstrate them.
 
 ## Technology and architecture
 
@@ -16,7 +16,7 @@ The recent implementation work extended the original adherence tracker with heal
 | API | Node.js, Express 5, TypeScript |
 | Database | PostgreSQL (Supabase) with Drizzle ORM |
 | Authentication | HTTP-only session cookies (web) or bearer session tokens (Android app), bcrypt password hashes, role and patient-access checks |
-| AI | Custom TypeScript Random Forest, optional Anthropic Claude insights, optional Groq chatbot |
+| AI | Custom TypeScript Random Forest, optional Anthropic Claude insights, Google Gemini chatbot via Supabase Edge Functions |
 | Reports | PDFKit PDF and CSV export |
 | API contract | OpenAPI 3.1, generated React Query client and Zod validators (Orval) |
 | Offline support | Installable PWA; IndexedDB saved data and outbox with automatic sync, idempotency keys and conflict checks (`src/offline.ts`) |
@@ -81,7 +81,8 @@ docs/
 | `CORS_ORIGIN` | No | Comma-separated web origins allowed to call the API with cookies. The Android app origin is always allowed, without cookies. |
 | `CARETRACK_API_URL` | No | Public HTTPS server address baked into the APK at build time; if empty, the app asks on first launch |
 | `ANTHROPIC_API_KEY` | No | Enables Claude-generated insights; rule-based insights remain available without it |
-| `GROQ_API_KEY`, `GROQ_MODEL` | No | Enables guarded Groq chatbot replies; model defaults to `llama-3.3-70b-versatile` |
+| `GEMINI_ASSISTANT_JWT_SECRET` | For Gemini chat | Shared 32+ character signing secret for the API and Supabase Edge Function |
+| `SUPABASE_URL` | No | Optional explicit Supabase project URL if it cannot be derived from `DATABASE_URL` |
 | `OTP_ENABLED` | No | Enables the second login step; enabled in the example configuration |
 | `OTP_OFFLINE_FALLBACK` | No | Shows a code in the local demo if delivery is unavailable; disable for production. Production defaults to disabled. |
 | `GMAIL_USER`, `GMAIL_APP_PASSWORD` | No | Gmail app-password delivery for login codes |
@@ -90,6 +91,8 @@ docs/
 | `SMS_GATEWAY_USER`, `SMS_GATEWAY_PASSWORD`, `SMS_GATEWAY_URL` | No | SMS Gateway for Android credentials (shown in the app); the URL is only needed for Local mode |
 
 Never put API keys, app passwords, session secrets, or real patient information in source control. Configure real recipient contact details before testing live OTP delivery; seeded demo addresses and phone numbers are fictional.
+
+Set `GEMINI_API_KEY` as a Supabase Edge Function secret only; do not put it in `.env`, frontend variables, or the APK. See [docs/GEMINI_CHAT.md](docs/GEMINI_CHAT.md) for Gemini setup and deployment.
 
 ### Production
 
@@ -135,6 +138,7 @@ The database/API retains the internal role identifier `provider` for doctors. Pr
 ### Accounts, privacy, and permissions
 
 - Users sign in with a password and, when OTP is enabled, verify a 6-digit one-time code by SMS or email. Real SMS is sent through an Android phone running SMS Gateway for Android ([docs/SMS_OTP.md](docs/SMS_OTP.md)); the number is marked verified after the first successful SMS code. Demo accounts show their code on screen instead and are never texted. Codes are hashed, expire, attempts are limited, and a resend cooldown applies.
+- The responsive login page displays the Whealth logo and uses the supplied envelope and lock designs in the email and password fields. The existing password visibility control and authentication flow are preserved.
 - The admin can create, edit, deactivate, and reset team accounts. Temporary passwords must be changed at first use. Users can change their password from My account; password changes invalidate other sessions.
 - A versioned privacy-consent record is required before protected application APIs are available.
 - The interface is role-specific, but authorization is also enforced on the API. Doctors see assigned or covered patients, caregivers see linked patients, and patients see their own records. Caregivers can record supported patient doses and health observations but cannot edit medication/profile data or send messages.
@@ -168,17 +172,17 @@ The displayed confidence is the highest class probability. It is not calibrated 
 
 Claude is optional for care insights and report narratives. The server sends anonymized counts/rates rather than names, contact details, or clinical free text; if Claude is unavailable, rule-based recommendations are used. AI views carry the disclaimer: *“AI suggestions support, not replace, clinical judgment.”*
 
-### Ask CareTrack chatbot
+### Ask Whealth chatbot
 
-The Ask CareTrack widget is for patient and caregiver accounts. Requests pass server-side checks in this order:
+The chatbot widget is for patient and caregiver accounts. Requests pass through the authenticated, rate-limited CareTrack API:
 
-1. Emergency and crisis wording gets fixed safety guidance.
-2. Requests for diagnosis, dose changes, injections, or prompt injection are refused with fixed safe responses.
-3. Off-topic questions are declined before patient context is fetched.
-4. Supported medication, appointment, adherence, and lab questions can use verified CareTrack records.
-5. Eligible questions may use Groq. Generated output is checked for unsafe dose-change advice before returning to the client.
+1. Emergency and crisis wording receives fixed safety guidance. Requests matching diagnosis/dose-change, injection, and prompt-injection rules receive fixed responses.
+2. Safe greetings, thanks, casual conversation, general-knowledge questions, and clinic questions are not rejected by a topic-word allowlist.
+3. Supported medication, appointment, adherence, and other patient-specific questions can be answered from records scoped to the signed-in user's access. Other questions use the Gemini Supabase Edge Function with scoped CareTrack context.
+4. The chatbot is instructed to answer in the user's language. Its official Whealth Clinic facts are: **A4 BLDG 23, GSIS Metrohome, Anonas Street, Santa Mesa, Manila, 1016 Metro Manila**, open **6:00 AM–6:00 PM**. It must not invent branches, services, directions, or hours.
+5. The Gemini system instruction tells the model to refuse clearly harmful requests, including instructions for violence or weapons, sexual content involving minors, fraud, malicious cyber activity, and self-harm.
 
-Groq is optional. When it is not configured, fails, or times out, built-in schedule, adherence, appointment, medication, and health-tip answers remain available. Chatbot use is audited. Medical content must be reviewed by a licensed clinician, and deployments should configure local emergency guidance.
+Gemini is configured through Supabase; its API key is not sent to the web or Android client. Direct record answers remain available if Gemini is unavailable. Chatbot use is audited. Medical content must be reviewed by a licensed clinician, and deployments should configure local emergency guidance. See [docs/GEMINI_CHAT.md](docs/GEMINI_CHAT.md) for setup details.
 
 ### Secure messages and live updates
 
@@ -209,7 +213,7 @@ Groq is optional. When it is not configured, fails, or times out, built-in sched
 - Role checks and patient-scope checks run at the API boundary. Request bodies and parameters are validated with Zod types generated from the OpenAPI contract.
 - Login, OTP, password change, and chatbot endpoints are rate limited. Helmet security headers and a Vite/PWA-compatible Content Security Policy are configured.
 - The privacy-consent gate blocks application API use until the current consent version is accepted. Disable OTP offline fallback for production.
-- Claude receives anonymized aggregates; Groq receives the guarded care-plan context and current question, not user names, contact details, or clinical free text.
+- Claude receives anonymized aggregates. Gemini requests are made server-to-server through the Supabase Edge Function and include the user's question plus records scoped to the signed-in user's access; the Gemini API key stays in Supabase.
 - Message and laboratory-file content is encrypted at rest. CSV exports use formula-injection protection.
 - Keep secrets in the ignored `.env` file. Use HTTPS between browsers, the API, and cloud services in deployment; this repository cannot guarantee hosting configuration.
 
@@ -219,9 +223,9 @@ This log records additions reflected in the current source, not items that remai
 
 | Addition | Implementation areas | How to see it |
 |---|---|---|
+| Gemini chatbot policy, Whealth Clinic facts, and login branding | `artifacts/api-server/src/routes/care.ts`; `artifacts/api-server/src/lib/chatbot-guards.ts`; `supabase/functions/gemini-assistant/index.ts`; `artifacts/caretrack/src/App.tsx`; `artifacts/caretrack/public/whealth-logo.jpg` | Sign in as a patient/caregiver and try a greeting, a general question, or a clinic location/hours question. Review [docs/GEMINI_CHAT.md](docs/GEMINI_CHAT.md) for Gemini configuration. |
 | Health metric and symptom recording, ranges, alerts, and seed records | `lib/db/src/schema/caretrack.ts`; `artifacts/api-server/src/routes/health.ts`; `artifacts/api-server/scripts/seed.mjs` | Open the Health page as Francisca (patient) or a linked caregiver; record a reading and review its range/notification behavior. |
 | Caregiver-scoped health recording; patient-only dose logging | `artifacts/api-server/src/routes/doses.ts`; `artifacts/api-server/src/lib/patient-access.ts` | In the Android app, record a health observation as the caregiver; dose buttons appear only for the patient. |
-| Guarded Groq chatbot and safe fallback | `artifacts/api-server/src/routes/care.ts`; `.env.example` | Ask CareTrack a supported question; try a restricted/off-topic question and compare the fixed response. |
 | Health-informed Random Forest features and confidence | `artifacts/api-server/src/lib/ml/risk-model.ts`; `artifacts/api-server/src/routes/ai.ts`; generated API packages; `artifacts/caretrack/src/App.tsx` | Open AI risk prediction or a patient risk card and inspect confidence and top factors. |
 | Health and AI evidence in PDF/CSV reports | `artifacts/api-server/src/lib/report-export.ts`; `artifacts/api-server/src/lib/report-service.ts`; seeded report data | Generate/download a weekly report for Francisca and inspect health summaries, out-of-range readings, and AI fields where a prediction exists. |
 | Authenticated near-real-time message/notification events | `artifacts/api-server/src/routes/events.ts`; `artifacts/api-server/src/lib/realtime.ts`; `artifacts/api-server/src/routes/messages.ts`; `artifacts/caretrack/src/App.tsx`; `lib/api-spec/openapi.yaml` | Send a message between authorized sessions; observe the recipient update without refreshing. Disconnect the stream to see polling fallback. |
@@ -272,7 +276,7 @@ Statuses indicate implementation evidence in this repository; “Partial” mean
 | FR8 | Analyze adherence and health data using the Random Forest Classifier | Done (added by us) | 15-feature model includes recent health signals; clinical validation is not claimed. |
 | FR9 | Generate patient risk predictions and adherence insights | Done (added by us) | Risk prediction, confidence, risk factors, and insight UI/API. |
 | FR10 | AI-assisted patient care recommendations from analyzed data | Done (already existed) | Optional Claude insights and rule-based recommendations; AI remains decision support. |
-| FR11 | AI chatbot for medication help and common health inquiries | Done (added by us) | Groq-backed, guarded chatbot with verified-data and built-in fallback. |
+| FR11 | AI chatbot for medication help and common health inquiries | Done (implementation) | Gemini-backed chatbot with patient-scoped records, safe general conversation, Whealth Clinic facts, and fixed local responses for selected safety cases. |
 | FR12 | Secure doctor-patient messaging with chat history | Done (added by us) | Encrypted message storage, authenticated SSE updates, and polling fallback. |
 | FR13 | Caregivers receive patient adherence and health alerts | Done (already existed) | Linked-caregiver notifications and patient-access checks; caregiver messaging stays read-only. |
 | FR14 | Doctor dashboard: records, adherence, health metrics, AI insights | Done (added by us) | Doctor patient pages, analytics, health data, and risk/insight views. |
@@ -284,7 +288,7 @@ Statuses indicate implementation evidence in this repository; “Partial” mean
 | NFR5 | Reliable offline medication reminders without internet | Partial | Android APK schedules on-device reminders that fire offline and with the app closed; the PWA path still depends on browser/OS support. Device-level evidence is not yet recorded. |
 | NFR6 | Sync locally recorded data to the cloud when back online | Done (added by us) | Offline dose queue syncs with original confirmation timestamps; follow the manual evidence steps. |
 | NFR7 | Doctor-patient messages in near real time | Done (added by us) | Authenticated SSE with polling fallback; caregiver send remains forbidden. |
-| NFR8 | Chatbot responds only to medication, health-info, system questions | Done (already existed) | Topic/safety guards, fixed refusals, verified-data answers, and output filtering. |
+| NFR8 | Chatbot responds to supported care and general questions while refusing harmful requests | Done (implementation) | The topic-word allowlist was removed; medical/emergency checks remain, and the Gemini system instruction covers broader harmful-request refusals. Live provider behavior still requires deployment testing. |
 | NFR9 | AI prediction results in under 10 seconds | Partial | Performance benchmark on larger generated data is not recorded; do not claim a verified threshold yet. |
 | NFR10 | Data integrity; prevent unauthorized modification or deletion | Partial | Soft delete and before/after history exist for implemented routes, but policy/history coverage is not universal. |
 | NFR11 | Logs of important user activities and system transactions | Done (already existed) | Audit log records important account, clinical, messaging, AI, and report actions. |
@@ -298,7 +302,8 @@ Statuses indicate implementation evidence in this repository; “Partial” mean
 - Medical-history, consultation, prescription, and record-history API/schema work exists, but UI integration and consistent history/soft-delete behavior across every clinical entity still need verification.
 - Mobile usability evidence at every target width and a larger-data Random Forest performance benchmark have not been recorded.
 - The Random Forest uses demonstration data and is not clinically validated. Confidence is the highest class probability, not calibrated clinical certainty.
-- Claude/Groq content is decision support only. A licensed clinician must review real clinical content and recommendations.
+- Claude/Gemini content is decision support only. A licensed clinician must review real clinical content and recommendations.
+- Gemini harmful-request behavior is model-generated and should be tested against a configured provider before deployment; the API does not include a deterministic local classifier for every harmful-request category.
 - Caregivers can read messages but cannot send them. Two-way caregiver messaging is not supported.
 - OTP/SMS delivery requires configured providers and valid recipient contact details. Availability, HTTPS, backups, and recovery depend on deployment infrastructure.
 

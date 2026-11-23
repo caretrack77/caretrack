@@ -1039,7 +1039,7 @@ paths:
     post:
       operationId: askAssistant
       tags: [insights]
-      summary: Ask the CareTrack assistant about your medications (off-topic questions are declined)
+      summary: Ask the CareTrack assistant about records, general questions, and Whealth Clinic information
       requestBody:
         required: true
         content:

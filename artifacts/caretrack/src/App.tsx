@@ -127,15 +127,18 @@ function LoginPage() {
   const restart = () => { setChallenge(null); setSent(null); setCode(''); setError(''); };
   const inputClass = 'h-12 w-full rounded-xl border border-input bg-white px-4 text-sm outline-none transition focus:border-primary focus:ring-4 focus:ring-primary/10';
   const cardClass = 'space-y-5 rounded-3xl border border-[#dce9e9] bg-white p-6 shadow-[0_20px_50px_rgba(31,74,88,.08)] sm:p-8';
-  return <div className="min-h-[100dvh] bg-[#eef6f7] text-foreground flex flex-col lg:flex-row">
+  return <div className="min-h-[100dvh] overflow-x-hidden bg-[#eef6f7] text-foreground flex flex-col lg:min-h-screen lg:flex-row">
     <section className="relative flex flex-col justify-between overflow-hidden bg-[#174353] px-6 py-6 text-white sm:min-h-[36vh] sm:px-7 sm:py-8 lg:min-h-[100dvh] lg:w-[48%] lg:px-14 lg:py-12">
       <div className="absolute -right-24 -top-24 h-96 w-96 rounded-full border border-white/10" />
       <div className="absolute -right-4 top-20 h-72 w-72 rounded-full border border-white/10" />
-      <div className="relative flex items-center gap-3"><Brand light /><span className="rounded-full border border-white/20 px-3 py-1 text-[11px] tracking-wide text-white/70">CARE, IN SYNC</span></div>
+      <div className="relative flex flex-wrap items-center gap-3">
+        <img src="/whealth-logo.jpg" alt="Whealth" className="h-14 w-14 rounded-2xl bg-white object-contain p-1 shadow-lg sm:h-16 sm:w-16" />
+        <div><div className="font-[Manrope] text-xl font-extrabold tracking-[-.04em] text-white sm:text-2xl">Whealth</div><div className="text-[10px] font-semibold tracking-[.16em] text-white/60">CARE, IN SYNC</div></div>
+      </div>
       <div className="relative max-w-xl py-6 sm:py-12">
-        <div className="mb-4 flex items-center gap-2 text-xs font-semibold tracking-[.16em] text-[#73d8c4] sm:mb-6 sm:text-sm"><span className="h-px w-8 bg-[#73d8c4]" /> MADE FOR EVERYDAY CARE</div>
+        <div className="mb-4 flex items-center gap-2 text-xs font-semibold tracking-[.16em] text-[#ffd13b] sm:mb-6 sm:text-sm"><span className="h-px w-8 bg-[#ffd13b]" /> MADE FOR EVERYDAY CARE</div>
         <h1 className="max-w-lg text-3xl font-bold leading-[1.1] tracking-[-.045em] sm:text-5xl lg:text-[58px]">A steadier rhythm for better care.</h1>
-        <p className="mt-4 max-w-md text-sm leading-6 text-white/70 sm:mt-6 sm:text-base sm:leading-7">CareTrack keeps medication schedules clear for the people who give care and the people who receive it.</p>
+        <p className="mt-4 max-w-md text-sm leading-6 text-white/70 sm:mt-6 sm:text-base sm:leading-7">Whealth keeps medication schedules clear for the people who give care and the people who receive it.</p>
         <div className="mt-12 hidden items-center gap-4 rounded-2xl border border-white/10 bg-white/[.06] p-4 backdrop-blur-sm sm:flex">
           <div className="grid h-11 w-11 place-items-center rounded-xl bg-[#6bd5c0]/15 text-[#77dfc9]"><HeartPulse size={22}/></div>
           <div><div className="text-sm font-semibold">The right dose. The right moment.</div><div className="mt-1 text-xs text-white/55">A shared view of the day, without the guesswork.</div></div>
@@ -146,10 +149,10 @@ function LoginPage() {
     <section className="flex flex-1 items-center justify-center px-5 py-8 sm:px-10 sm:py-12">
       <div className="w-full max-w-[420px] page-enter">
         {needsServer ? <ServerSetup inputClass={inputClass} cardClass={cardClass} onDone={()=>{setEditServer(false);setError('')}} onCancel={getServerUrl()?()=>setEditServer(false):undefined}/> : <>
-        <div className="mb-6 sm:mb-9"><p className="text-xs font-bold uppercase tracking-[.16em] text-primary">Welcome back</p><h2 className="mt-3 text-2xl font-bold text-[#173d4a] sm:text-3xl">Sign in to CareTrack</h2><p className="mt-2 text-sm text-muted-foreground">Sign in with the account provided by your administrator.</p><p data-testid="text-device-policy" className="mt-3 flex items-start gap-2 rounded-xl border border-[#d9e8e8] bg-white/70 px-3 py-2 text-xs leading-5 text-[#4f6f77]"><ShieldCheck size={14} className="mt-0.5 shrink-0 text-[#25867c]"/>{isNativeApp?'For patients and caregivers. Doctors and administrators sign in on a computer at the CareTrack website.':'For doctors and administrators, on a desktop or laptop. Patients and caregivers use the CareTrack Android app.'}</p></div>
-        {!challenge ? <form onSubmit={submit} className={cardClass}>
-          <label className="block"><span className="mb-2 block text-sm font-semibold">Email address</span><input data-testid="input-email" type="email" autoComplete="username" required value={email} onChange={e=>setEmail(e.target.value)} className={inputClass} placeholder="you@example.com"/></label>
-          <label className="block"><span className="mb-2 block text-sm font-semibold">Password</span><PasswordInput testId="input-password" required value={password} onChange={setPassword} autoComplete="current-password" className={inputClass} placeholder="Enter your password"/></label>
+        <div className="mb-6 sm:mb-9"><p className="text-xs font-bold uppercase tracking-[.16em] text-primary">Welcome back</p><h2 className="mt-3 text-2xl font-bold text-[#173d4a] sm:text-3xl">Sign in to Whealth</h2><p className="mt-2 text-sm text-muted-foreground">Sign in with the account provided by your administrator.</p><p data-testid="text-device-policy" className="mt-3 flex items-start gap-2 rounded-xl border border-[#d9e8e8] bg-white/70 px-3 py-2 text-xs leading-5 text-[#4f6f77]"><ShieldCheck size={14} className="mt-0.5 shrink-0 text-[#25867c]"/>{isNativeApp?'For patients and caregivers. Doctors and administrators sign in on a computer at the CareTrack website.':'For doctors and administrators, on a desktop or laptop. Patients and caregivers use the CareTrack Android app.'}</p></div>
+        {!challenge ? <form onSubmit={submit} className={`${cardClass} border-white/80 shadow-[0_24px_70px_rgba(31,74,88,.12)]`}>
+          <label className="block"><span className="mb-2 block text-sm font-semibold">Email address</span><div className="relative"><EmailReferenceIcon/><input data-testid="input-email" type="email" autoComplete="username" required value={email} onChange={e=>setEmail(e.target.value)} className={`${inputClass} pl-12`} placeholder="you@example.com"/></div></label>
+          <label className="block"><span className="mb-2 block text-sm font-semibold">Password</span><PasswordInput testId="input-password" required value={password} onChange={setPassword} autoComplete="current-password" className={`${inputClass} pl-12`} placeholder="Enter your password" referenceLockIcon/></label>
           {error && <div data-testid="status-login-error" role="alert" className="rounded-xl border border-red-200 bg-red-50 p-3 text-sm text-red-800">{error}</div>}
           <button data-testid="button-login" disabled={login.isPending} className="flex h-12 w-full items-center justify-center gap-2 rounded-xl bg-[#17647a] font-semibold text-white shadow-sm transition hover:bg-[#125366] disabled:opacity-60">{login.isPending ? 'Checking…' : 'Continue'} <ArrowRight size={17}/></button>
           <p className="flex items-center justify-center gap-1.5 text-center text-xs leading-5 text-muted-foreground"><ShieldCheck size={13}/> Protected with two-step verification</p>
@@ -1480,9 +1483,23 @@ function Conversation({user,patientId,patientName,onBack,backLabel='Back to conv
 }
 
 /** Password field with a show/hide toggle. */
-function PasswordInput({value,onChange,name,id,placeholder,required=false,minLength,autoComplete,className='',testId}:{value?:string;onChange?:(v:string)=>void;name?:string;id?:string;placeholder?:string;required?:boolean;minLength?:number;autoComplete?:string;className?:string;testId?:string}){
+function EmailReferenceIcon(){
+  return <svg aria-hidden="true" viewBox="0 0 40 28" className="pointer-events-none absolute left-3.5 top-1/2 h-5 w-7 -translate-y-1/2 text-[#252222]">
+    <rect x="2" y="2" width="36" height="24" rx="4" fill="none" stroke="currentColor" strokeWidth="2.2"/>
+    <path d="m3.5 4 14.8 12.1a2.8 2.8 0 0 0 3.4 0L36.5 4M3.5 24l11-11M36.5 24l-11-11" fill="none" stroke="currentColor" strokeWidth="2.2" strokeLinecap="round" strokeLinejoin="round"/>
+  </svg>;
+}
+function PasswordReferenceIcon(){
+  return <svg aria-hidden="true" viewBox="0 0 512 512" className="pointer-events-none absolute left-3.5 top-1/2 h-[19px] w-[19px] -translate-y-1/2 text-[#111]">
+    <path fill="currentColor" d="M148 192v-32c0-64.1 51.9-116 116-116s116 51.9 116 116v32h-43v-32c0-40.3-32.7-73-73-73s-73 32.7-73 73v32h-43Z"/>
+    <rect x="81" y="191" width="350" height="280" rx="50" fill="currentColor"/>
+    <circle cx="256" cy="301" r="44" fill="white"/>
+    <rect x="235" y="326" width="42" height="82" rx="21" fill="white"/>
+  </svg>;
+}
+function PasswordInput({value,onChange,name,id,placeholder,required=false,minLength,autoComplete,className='',testId,referenceLockIcon=false}:{value?:string;onChange?:(v:string)=>void;name?:string;id?:string;placeholder?:string;required?:boolean;minLength?:number;autoComplete?:string;className?:string;testId?:string;referenceLockIcon?:boolean}){
   const [shown,setShown]=useState(false);
-  return <div className="relative"><input id={id} name={name} data-testid={testId} type={shown?'text':'password'} required={required} minLength={minLength} autoComplete={autoComplete} value={onChange?value:undefined} defaultValue={onChange?undefined:value} onChange={onChange?e=>onChange(e.target.value):undefined} placeholder={placeholder} className={`${className} pr-11`}/><button type="button" onClick={()=>setShown(!shown)} aria-label={shown?'Hide password':'Show password'} aria-pressed={shown} data-testid={testId?`${testId}-toggle`:undefined} className="absolute inset-y-0 right-0 grid w-11 place-items-center text-[#7b9399] hover:text-[#17647a]">{shown?<EyeOff size={17}/>:<Eye size={17}/>}</button></div>;
+  return <div className="relative">{referenceLockIcon&&<PasswordReferenceIcon/>}<input id={id} name={name} data-testid={testId} type={shown?'text':'password'} required={required} minLength={minLength} autoComplete={autoComplete} value={onChange?value:undefined} defaultValue={onChange?undefined:value} onChange={onChange?e=>onChange(e.target.value):undefined} placeholder={placeholder} className={`${className} pr-11`}/><button type="button" onClick={()=>setShown(!shown)} aria-label={shown?'Hide password':'Show password'} aria-pressed={shown} data-testid={testId?`${testId}-toggle`:undefined} className="absolute inset-y-0 right-0 grid w-11 place-items-center text-[#7b9399] hover:text-[#17647a]">{shown?<EyeOff size={17}/>:<Eye size={17}/>}</button></div>;
 }
 const passwordChecks=(p:string)=>[{ok:p.length>=8,label:'At least 8 characters'},{ok:/[A-Za-z]/.test(p)&&/\d/.test(p),label:'Letters and numbers'},{ok:/[^A-Za-z0-9]/.test(p)||p.length>=12,label:'A symbol or 12+ characters (recommended)'}];
 

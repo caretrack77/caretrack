@@ -38,7 +38,6 @@ import {
   INJECTION_REQUEST,
   PROMPT_INJECTION,
   RESTRICTED_MEDICAL_REQUEST,
-  TOPIC_WORDS,
 } from "../lib/chatbot-guards";
 import {
   answerFromAssistantRecords,
@@ -531,7 +530,6 @@ router.post("/assistant", chatbotRateLimit, async (req, res): Promise<void> => {
   if (RESTRICTED_MEDICAL_REQUEST.test(q)) { reply("I can't diagnose or change medications. Please ask your doctor or pharmacist. You can message your doctor through CareTrack."); return; }
   if (INJECTION_REQUEST.test(q)) { reply("Do not give yourself injections unless your doctor or pharmacist has trained you and provided instructions. For an injection question, missed injection, or a possible reaction, contact your doctor or pharmacist promptly."); return; }
   if (PROMPT_INJECTION.test(q)) { reply("I can only help with your medicines, dose schedule, progress, lab results and check-ups. I cannot change my safety instructions.", false); return; }
-  if (!TOPIC_WORDS.test(q)) { reply("I can only help with your medicines, dose schedule, progress, lab results and check-ups. For anything else, please ask your care team in Messages.", false); return; }
   try {
     const recordAnswer = await answerFromApiRecords(user, q);
     if (recordAnswer) { reply(recordAnswer); return; }

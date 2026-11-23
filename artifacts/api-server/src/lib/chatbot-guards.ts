@@ -1,5 +1,3 @@
-export const TOPIC_WORDS =
-  /\b(medicine|medicines|medication|meds?|dose|doses|pill|pills|tablet|capsule|gamot|inom|iniinom|schedule|remind|reminder|missed|forgot|nakalimutan|late|adherence|progress|streak|doctor|check-?up|appointment|lab|result|side ?effects?|dizzy|nausea|rash|allerg|pain|caretrack|health|tip|tips|course|refill|today|tomorrow|next|ngayon|bukas|kailan|kelan|susunod|oras|doing|how am i|kumusta ako|kamusta ako|my (rate|score|record))\b/i;
 export const EMERGENCY = /\b(chest pain|can'?t breathe|cannot breathe|difficulty breathing|overdose|suicid|unconscious|seizure|severe bleeding|hirap huminga|sumasakit ang dibdib|sobrang dugo)\b/i;
 export const INJECTION_REQUEST = /\b(shot|inject|injection|injectable|turok|magpaturok)\b/i;
 export const PROMPT_INJECTION = /\b(ignore (all |any |previous )?instructions|forget (all |your )?instructions|reveal (the )?system prompt|act as .*system)\b/i;

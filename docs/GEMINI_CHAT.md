@@ -2,7 +2,7 @@
 
 Website and Android chat both use the authenticated CareTrack API. The API checks the CareTrack session and patient/caregiver role, then calls the Supabase Edge Function with a short-lived signed JWT. The Gemini API key stays in Supabase and is never sent to either client.
 
-Questions about the next dose, missed doses, active medication schedules, upcoming appointments, and the last 7 days of dose progress are answered directly from the signed-in user's accessible CareTrack API records. Other supported care-record questions use Gemini with only that user's scoped records. If Gemini is unavailable, these direct record lookups continue to work.
+Questions about the next dose, missed doses, active medication schedules, upcoming appointments, and the last 7 days of dose progress are answered directly from the signed-in user's accessible CareTrack API records. Gemini also handles greetings, general questions, and Whealth Clinic questions using the clinic facts in its system instructions; patient-specific questions use only that user's scoped records. The supplied clinic location is A4 BLDG 23, GSIS Metrohome, Anonas Street, Santa Mesa, Manila, 1016 Metro Manila, and the schedule is 6:00 AM–6:00 PM. If Gemini is unavailable, direct record lookups continue to work.
 
 ## Configure secrets
 
