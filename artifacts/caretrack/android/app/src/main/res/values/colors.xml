@@ -1,0 +1,8 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <color name="colorPrimary">#17647A</color>
+    <color name="colorPrimaryDark">#174353</color>
+    <color name="colorAccent">#46B5A0</color>
+    <color name="caretrack_status_bar">#17647A</color>
+    <color name="caretrack_navigation_bar">#F2F7F7</color>
+</resources>

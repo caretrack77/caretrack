@@ -48,7 +48,7 @@ export default defineConfig({
     },
   },
   preview: {
-    port,
+    port: 4173,
     host: true,
     proxy: {
       '/api': { target: apiTarget, changeOrigin: true },

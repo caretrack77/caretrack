@@ -256,6 +256,7 @@ This log records additions reflected in the current source, not items that remai
 | `pnpm typecheck` | Typecheck workspace packages |
 | `pnpm test` | Run the automated tests |
 | `pnpm build` | Typecheck, run tests, and build workspace packages |
+| `pnpm --filter @workspace/caretrack run serve` | Preview the production web build at `http://localhost:4173` |
 | `pnpm start` | Start the production API/static app server |
 | `pnpm android:apk` | Build the web app, sync it into Capacitor, and assemble a release APK |
 | `pnpm --filter @workspace/api-spec run codegen` | Regenerate API clients/validators after an OpenAPI change |
